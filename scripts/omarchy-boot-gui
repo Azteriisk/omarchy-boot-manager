@@ -179,8 +179,9 @@ class BootWindow(Adw.ApplicationWindow):
         self.row_win_guid.add_suffix(self.win_guid_label)
         self.win_group.add(self.row_win_guid)
 
-        self.row_limine_status = Adw.ActionRow(title="Limine Chainloading")
+        self.row_limine_status = Adw.ActionRow(title="Limine Windows Entry")
         self.limine_status_label = Gtk.Label()
+        self.limine_status_label.add_css_class("pill")
         self.row_limine_status.add_suffix(self.limine_status_label)
         self.win_group.add(self.row_limine_status)
 
@@ -425,12 +426,23 @@ class BootWindow(Adw.ApplicationWindow):
         limine_cfg = read_limine_config()
         if limine_cfg is not None:
             has_chain = has_windows_chainload(limine_cfg)
-            self.limine_status_label.set_text("Configured" if has_chain else "Not in limine.conf")
             if has_chain:
+                self.limine_status_label.set_text("Configured")
+                self.limine_status_label.remove_css_class("warning")
+                self.limine_status_label.add_css_class("success")
+                self.row_limine_status.set_subtitle("Windows chainload entry is in /boot/limine.conf")
                 self.btn_add_win.set_label("Already Configured")
                 self.btn_add_win.set_sensitive(False)
+            else:
+                self.limine_status_label.set_text("Not Configured")
+                self.limine_status_label.remove_css_class("success")
+                self.limine_status_label.add_css_class("warning")
+                self.row_limine_status.set_subtitle("Go to the Limine Dual-Boot tab to add the Windows entry")
         else:
-            self.limine_status_label.set_text("Ready to Configure")
+            self.limine_status_label.set_text("Not Configured")
+            self.limine_status_label.remove_css_class("success")
+            self.limine_status_label.add_css_class("warning")
+            self.row_limine_status.set_subtitle("Go to the Limine Dual-Boot tab to add the Windows entry")
 
         # Motherboard guide text
         guide_lines = [
