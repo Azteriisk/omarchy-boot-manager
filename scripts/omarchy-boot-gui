@@ -7,6 +7,7 @@ setting up sbctl with Microsoft anti-cheat preservation, and quick reboot contro
 
 import sys
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -17,7 +18,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Gio, GLib, Pango
+from gi.repository import Gtk, Adw, Gio, GLib, GObject, Pango
 
 from core.boot_detector import (
     get_firmware_info,
@@ -39,6 +40,8 @@ from core.secureboot_manager import (
 
 
 class BootApp(Adw.Application):
+    __gtype_name__ = "OmarchyBootApp"
+
     def __init__(self):
         super().__init__(
             application_id="org.omarchy.bootmanager",
@@ -53,25 +56,23 @@ class BootApp(Adw.Application):
 
 
 class BootWindow(Adw.ApplicationWindow):
+    __gtype_name__ = "OmarchyBootWindow"
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.set_title("Omarchy Boot & Secure Boot Manager")
-        self.set_default_size(840, 720)
+        self.set_title("Omarchy Boot and Secure Boot Manager")
+        self.set_default_size(860, 720)
 
         self.setup_ui()
         self.refresh_state()
 
     def setup_ui(self):
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.set_content(main_box)
+        toolbar_view = Adw.ToolbarView()
+        self.set_content(toolbar_view)
 
         # Header Bar
         header = Adw.HeaderBar()
-        title = Adw.WindowTitle(
-            title="Boot & Secure Boot Manager",
-            subtitle="Windows Dual-Boot & Anti-Cheat Setup"
-        )
-        header.set_title_widget(title)
+        toolbar_view.add_top_bar(header)
 
         # Quick Reboot Buttons in Header
         reboot_win_btn = Gtk.Button(label="Reboot to Windows")
@@ -85,13 +86,27 @@ class BootWindow(Adw.ApplicationWindow):
         reboot_bios_btn.connect("clicked", self.on_reboot_bios)
         header.pack_end(reboot_bios_btn)
 
-        main_box.append(header)
-
         # View Switcher Bar & Stack
         self.view_stack = Adw.ViewStack()
-        view_switcher_title = Adw.ViewSwitcherTitle()
-        view_switcher_title.set_stack(self.view_stack)
+        self.view_stack.set_vexpand(True)
+        self.view_stack.set_hexpand(True)
+
+        view_switcher_title = Adw.ViewSwitcherTitle(
+            title="Boot and Secure Boot",
+            subtitle="Windows Dual-Boot and Anti-Cheat Setup",
+            stack=self.view_stack
+        )
         header.set_title_widget(view_switcher_title)
+
+        view_switcher_bar = Adw.ViewSwitcherBar(stack=self.view_stack)
+        view_switcher_title.bind_property(
+            "title-visible",
+            view_switcher_bar,
+            "reveal",
+            GObject.BindingFlags.SYNC_CREATE
+        )
+        toolbar_view.add_bottom_bar(view_switcher_bar)
+        toolbar_view.set_content(self.view_stack)
 
         # Page 1: Dashboard
         self.dashboard_page = self.build_dashboard_page()
@@ -120,25 +135,15 @@ class BootWindow(Adw.ApplicationWindow):
             "drive-multidisk-symbolic"
         )
 
-        main_box.append(self.view_stack)
-
     def build_dashboard_page(self) -> Gtk.Widget:
-        scroll = Gtk.ScrolledWindow()
-        clamp = Adw.Clamp(maximum_size=800)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-        box.set_margin_top(24)
-        box.set_margin_bottom(24)
-        box.set_margin_start(24)
-        box.set_margin_end(24)
-        clamp.set_child(box)
-        scroll.set_child(clamp)
+        page = Adw.PreferencesPage()
 
         # System Status Group
         self.status_group = Adw.PreferencesGroup(
-            title="System Security & Boot Status",
+            title="System Security and Boot Status",
             description="Hardware state and active anti-cheat readiness"
         )
-        box.append(self.status_group)
+        page.add(self.status_group)
 
         self.row_sb = Adw.ActionRow(title="Secure Boot Status")
         self.sb_badge = Gtk.Label()
@@ -146,7 +151,7 @@ class BootWindow(Adw.ApplicationWindow):
         self.row_sb.add_suffix(self.sb_badge)
         self.status_group.add(self.row_sb)
 
-        self.row_board = Adw.ActionRow(title="Motherboard & Firmware")
+        self.row_board = Adw.ActionRow(title="Motherboard and Firmware")
         self.board_label = Gtk.Label()
         self.row_board.add_suffix(self.board_label)
         self.status_group.add(self.row_board)
@@ -161,7 +166,7 @@ class BootWindow(Adw.ApplicationWindow):
             title="Windows 11 Dual-Boot Integration",
             description="Status of Windows partition detection and Limine chainload"
         )
-        box.append(self.win_group)
+        page.add(self.win_group)
 
         self.row_win_detected = Adw.ActionRow(title="Windows Installation")
         self.win_detected_label = Gtk.Label()
@@ -179,46 +184,85 @@ class BootWindow(Adw.ApplicationWindow):
         self.row_limine_status.add_suffix(self.limine_status_label)
         self.win_group.add(self.row_limine_status)
 
-        return scroll
+        # Quick Actions Group on Dashboard
+        actions_group = Adw.PreferencesGroup(
+            title="Quick Boot and Setup Actions",
+            description="Fast shortcuts for restarting or configuring your system"
+        )
+        page.add(actions_group)
+
+        row_act_win = Adw.ActionRow(
+            title="Reboot into Windows",
+            subtitle="Restarts once into Windows Boot Manager (next boot returns to Omarchy)"
+        )
+        btn_act_win = Gtk.Button(label="Reboot to Windows")
+        btn_act_win.add_css_class("suggested-action")
+        btn_act_win.connect("clicked", self.on_reboot_windows)
+        row_act_win.add_suffix(btn_act_win)
+        actions_group.add(row_act_win)
+
+        row_act_bios = Adw.ActionRow(
+            title="Reboot into UEFI / BIOS Setup",
+            subtitle="Restarts directly into motherboard firmware settings"
+        )
+        btn_act_bios = Gtk.Button(label="Reboot to BIOS")
+        btn_act_bios.connect("clicked", self.on_reboot_bios)
+        row_act_bios.add_suffix(btn_act_bios)
+        actions_group.add(row_act_bios)
+
+        row_act_wiz = Adw.ActionRow(
+            title="Secure Boot Signing Wizard",
+            subtitle="Walks through enrolling custom keys with Microsoft anti-cheat support"
+        )
+        btn_act_wiz = Gtk.Button(label="Open Wizard")
+        btn_act_wiz.connect("clicked", lambda b: self.view_stack.set_visible_child_name("wizard"))
+        row_act_wiz.add_suffix(btn_act_wiz)
+        actions_group.add(row_act_wiz)
+
+        return page
 
     def build_wizard_page(self) -> Gtk.Widget:
-        scroll = Gtk.ScrolledWindow()
-        clamp = Adw.Clamp(maximum_size=800)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-        box.set_margin_top(24)
-        box.set_margin_bottom(24)
-        box.set_margin_start(24)
-        box.set_margin_end(24)
-        clamp.set_child(box)
-        scroll.set_child(clamp)
+        page = Adw.PreferencesPage()
 
         intro_group = Adw.PreferencesGroup(
             title="How It Works: Zero-BIOS Secure Boot",
             description="Anti-cheat games (Valorant, EAC, FACEIT) require Secure Boot in Windows. "
-                        "By enrolling your own keys while preserving Microsoft's OEM keys (-m), "
+                        "By enrolling your own keys while preserving Microsoft OEM keys (-m), "
                         "both Windows and Omarchy boot with Secure Boot permanently enabled 24/7."
         )
-        box.append(intro_group)
+        page.add(intro_group)
 
         # Step 1
         step1_group = Adw.PreferencesGroup(
             title="Step 1: Put Motherboard into Setup Mode",
             description="Your motherboard must be placed into Setup Mode (clearing existing PK keys) once to allow enrolling custom keys."
         )
-        box.append(step1_group)
+        page.add(step1_group)
 
-        self.step1_guide_row = Adw.ExpanderRow(title="View Motherboard Guide", subtitle="Vendor-specific BIOS instructions")
+        self.step1_guide_row = Adw.ExpanderRow(
+            title="View Motherboard Guide",
+            subtitle="Vendor-specific BIOS instructions"
+        )
         step1_group.add(self.step1_guide_row)
+
+        guide_row = Adw.PreferencesRow()
+        guide_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        guide_box.set_margin_top(12)
+        guide_box.set_margin_bottom(12)
+        guide_box.set_margin_start(16)
+        guide_box.set_margin_end(16)
 
         self.step1_instructions = Gtk.Label(xalign=0)
         self.step1_instructions.set_wrap(True)
-        self.step1_instructions.set_margin_top(12)
-        self.step1_instructions.set_margin_bottom(12)
-        self.step1_instructions.set_margin_start(16)
-        self.step1_instructions.set_margin_end(16)
-        self.step1_guide_row.add_row(self.step1_instructions)
+        self.step1_instructions.set_selectable(True)
+        guide_box.append(self.step1_instructions)
+        guide_row.set_child(guide_box)
+        self.step1_guide_row.add_row(guide_row)
 
-        bios_btn_row = Adw.ActionRow(title="Enter UEFI / BIOS Setup", subtitle="Reboot directly into firmware settings without pressing hotkeys")
+        bios_btn_row = Adw.ActionRow(
+            title="Enter UEFI / BIOS Setup",
+            subtitle="Reboot directly into firmware settings without pressing hotkeys"
+        )
         btn_fw = Gtk.Button(label="Reboot to BIOS")
         btn_fw.connect("clicked", self.on_reboot_bios)
         bios_btn_row.add_suffix(btn_fw)
@@ -226,10 +270,10 @@ class BootWindow(Adw.ApplicationWindow):
 
         # Step 2
         step2_group = Adw.PreferencesGroup(
-            title="Step 2: Enroll Custom Keys & Sign Bootloaders",
+            title="Step 2: Enroll Custom Keys and Sign Bootloaders",
             description="Generates your master keys, enrolls them with Microsoft OEM keys, and signs Limine and kernel UKIs."
         )
-        box.append(step2_group)
+        page.add(step2_group)
 
         run_wizard_row = Adw.ActionRow(
             title="Launch Automated Signing Wizard",
@@ -244,28 +288,20 @@ class BootWindow(Adw.ApplicationWindow):
         # Step 3
         step3_group = Adw.PreferencesGroup(
             title="Step 3: Turn Secure Boot ON in BIOS",
-            description="Once files are signed, return to your BIOS and turn Secure Boot Enabled. Windows and Omarchy will boot without toggling settings ever again."
+            description="Once files are signed, return to your BIOS and turn Secure Boot to Enabled. Windows and Omarchy will boot without toggling settings ever again."
         )
-        box.append(step3_group)
+        page.add(step3_group)
 
-        return scroll
+        return page
 
     def build_limine_page(self) -> Gtk.Widget:
-        scroll = Gtk.ScrolledWindow()
-        clamp = Adw.Clamp(maximum_size=800)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-        box.set_margin_top(24)
-        box.set_margin_bottom(24)
-        box.set_margin_start(24)
-        box.set_margin_end(24)
-        clamp.set_child(box)
-        scroll.set_child(clamp)
+        page = Adw.PreferencesPage()
 
         cfg_group = Adw.PreferencesGroup(
             title="Limine Windows Chainloading",
             description="Enables launching Windows directly from the Limine boot menu on startup."
         )
-        box.append(cfg_group)
+        page.add(cfg_group)
 
         self.btn_add_win = Gtk.Button(label="Add Windows to Limine")
         self.btn_add_win.add_css_class("suggested-action")
@@ -283,15 +319,24 @@ class BootWindow(Adw.ApplicationWindow):
             title="Generated Entry Preview",
             description="The exact configuration syntax written to /boot/limine.conf"
         )
-        box.append(preview_group)
+        page.add(preview_group)
+
+        preview_row = Adw.PreferencesRow()
+        preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        preview_box.set_margin_top(12)
+        preview_box.set_margin_bottom(12)
+        preview_box.set_margin_start(16)
+        preview_box.set_margin_end(16)
 
         self.limine_preview = Gtk.Label(xalign=0)
         self.limine_preview.set_wrap(True)
         self.limine_preview.set_selectable(True)
         self.limine_preview.add_css_class("monospace")
-        preview_group.add(self.limine_preview)
+        preview_box.append(self.limine_preview)
+        preview_row.set_child(preview_box)
+        preview_group.add(preview_row)
 
-        return scroll
+        return page
 
     def refresh_state(self):
         """Refreshes hardware and boot status."""
@@ -306,7 +351,7 @@ class BootWindow(Adw.ApplicationWindow):
 
         # Secure boot badge
         if sb["enabled"]:
-            self.sb_badge.set_text("Enabled & Active")
+            self.sb_badge.set_text("Enabled and Active")
             self.sb_badge.remove_css_class("warning")
             self.sb_badge.remove_css_class("error")
             self.sb_badge.add_css_class("success")
@@ -440,13 +485,17 @@ class BootWindow(Adw.ApplicationWindow):
     def on_run_cli_wizard(self, button):
         # Open in terminal emulator
         term_cmd = None
-        for term in ["ghostty", "foot", "kitty", "alacritty", "xterm"]:
+        for term in ["ghostty", "foot", "kitty", "alacritty", "konsole", "gnome-terminal", "xterm"]:
             if shutil.which(term):
                 term_cmd = term
                 break
 
-        if term_cmd:
+        if term_cmd in ("ghostty", "foot", "kitty", "alacritty"):
             subprocess.Popen([term_cmd, "-e", "omarchy-boot", "setup"])
+        elif term_cmd:
+            subprocess.Popen([term_cmd, "-e", "omarchy-boot setup"])
+        elif shutil.which("xdg-terminal-exec"):
+            subprocess.Popen(["xdg-terminal-exec", "omarchy-boot", "setup"])
         else:
             subprocess.Popen(["omarchy-boot", "setup"])
 
@@ -457,5 +506,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import shutil
     main()
