@@ -5,6 +5,7 @@ Hardware, EFI variables, partition, and bootloader detection engine.
 
 import os
 import re
+import json
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -156,6 +157,28 @@ def read_efivar_byte(prefix: str) -> Optional[int]:
     return None
 
 
+def check_keys_enrolled() -> bool:
+    """Checks whether custom keys have been enrolled into NVRAM and sbctl database."""
+    sbctl_dir = Path("/var/lib/sbctl")
+    keys_created = (sbctl_dir / "keys" / "PK").exists()
+    pk_efivars = list(EFIVARS_DIR.glob("PK-*"))
+    pk_enrolled = len(pk_efivars) > 0 and pk_efivars[0].stat().st_size > 4
+    return keys_created and pk_enrolled
+
+
+def get_signed_file_count() -> int:
+    """Returns the count of signed files registered in sbctl database."""
+    files_json = Path("/var/lib/sbctl/files.json")
+    if files_json.exists():
+        try:
+            data = json.loads(files_json.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return len(data)
+        except Exception:
+            pass
+    return 0
+
+
 def get_secure_boot_status() -> Dict[str, Any]:
     """Checks the live state of UEFI Secure Boot."""
     sb_byte = read_efivar_byte("SecureBoot")
@@ -165,24 +188,32 @@ def get_secure_boot_status() -> Dict[str, Any]:
     enabled = (sb_byte == 1)
     setup_mode = (sm_byte == 1)
     custom_keys = (vk_byte == 1)
+    keys_enrolled = check_keys_enrolled()
+    signed_count = get_signed_file_count()
 
-    status_code = "disabled"
     if enabled:
         status_code = "enabled"
+        label = "Enabled and Active"
+    elif keys_enrolled and signed_count > 0:
+        status_code = "enrolled_pending_reboot"
+        label = "Keys Enrolled and Signed (Reboot to BIOS to Activate)"
     elif setup_mode:
         status_code = "setup_mode"
+        label = "Setup Mode (Ready to Enroll)"
+    else:
+        status_code = "disabled"
+        label = "Disabled (User Mode)"
 
     return {
         "enabled": enabled,
         "setup_mode": setup_mode,
         "custom_keys": custom_keys,
+        "keys_enrolled": keys_enrolled,
+        "signed_count": signed_count,
         "raw_secure_boot": sb_byte,
         "raw_setup_mode": sm_byte,
         "status_code": status_code,
-        "label": (
-            "Enabled & Active" if enabled else
-            ("Setup Mode (Ready to Enroll)" if setup_mode else "Disabled (User Mode)")
-        )
+        "label": label
     }
 
 

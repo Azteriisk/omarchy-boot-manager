@@ -71,10 +71,13 @@ def cmd_status(args):
     print(f"\n{BOLD}🔒 Secure Boot:{RESET}")
     if sb["enabled"]:
         print(f"  • State: {GREEN}{BOLD}ENABLED & ACTIVE{RESET} (Anti-Cheat Ready)")
+    elif sb.get("status_code") == "enrolled_pending_reboot":
+        print(f"  • State: {CYAN}{BOLD}KEYS ENROLLED & SIGNED{RESET} (Reboot to BIOS to activate)")
+        print(f"  • Next:  {YELLOW}{BOLD}Reboot into BIOS -> set Secure Boot to Enabled{RESET}")
     elif sb["setup_mode"]:
         print(f"  • State: {YELLOW}{BOLD}SETUP MODE (Ready to enroll keys){RESET}")
     else:
-        print(f"  • State: {RED}{BOLD}DISABLED (User Mode){RESET}")
+        print(f"  • State: {RED}{BOLD}DISABLED (User Mode){RESET} (Needs Setup Mode first)")
 
     sbctl_ok = check_sbctl_installed()
     print(f"  • sbctl Tool: {'Installed' if sbctl_ok else 'Not installed (available via pacman)'}")

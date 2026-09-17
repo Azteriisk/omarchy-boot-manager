@@ -292,6 +292,19 @@ class BootWindow(Adw.ApplicationWindow):
         )
         page.add(step3_group)
 
+        # Status row shown after wizard completes
+        self.step3_status_row = Adw.ActionRow(
+            title="✅ Keys Enrolled — Bootloaders Signed",
+            subtitle="Your system is ready. Go to BIOS and enable Secure Boot to finish.",
+        )
+        self.step3_status_row.add_css_class("success")
+        btn_reboot_bios2 = Gtk.Button(label="Reboot to BIOS Now")
+        btn_reboot_bios2.add_css_class("suggested-action")
+        btn_reboot_bios2.connect("clicked", self.on_reboot_bios)
+        self.step3_status_row.add_suffix(btn_reboot_bios2)
+        self.step3_status_row.set_visible(False)
+        step3_group.add(self.step3_status_row)
+
         return page
 
     def build_limine_page(self) -> Gtk.Widget:
@@ -350,24 +363,39 @@ class BootWindow(Adw.ApplicationWindow):
         self.board_label.set_text(f"{hw['vendor']} ({hw['model']})")
 
         # Secure boot badge
+        status_code = sb.get("status_code", "")
+        signed_count = sb.get("signed_count", 0)
+
         if sb["enabled"]:
             self.sb_badge.set_text("Enabled and Active")
             self.sb_badge.remove_css_class("warning")
             self.sb_badge.remove_css_class("error")
             self.sb_badge.add_css_class("success")
             self.row_sb.set_subtitle("Anti-cheat games and Windows run smoothly")
+            self.step3_status_row.set_visible(False)
+        elif status_code == "enrolled_pending_reboot":
+            self.sb_badge.set_text("Ready to Activate")
+            self.sb_badge.remove_css_class("warning")
+            self.sb_badge.remove_css_class("error")
+            self.sb_badge.add_css_class("success")
+            self.row_sb.set_subtitle(
+                f"Keys enrolled, {signed_count} file(s) signed — Reboot to BIOS and enable Secure Boot"
+            )
+            self.step3_status_row.set_visible(True)
         elif sb["setup_mode"]:
             self.sb_badge.set_text("Setup Mode")
             self.sb_badge.remove_css_class("success")
             self.sb_badge.remove_css_class("error")
             self.sb_badge.add_css_class("warning")
             self.row_sb.set_subtitle("Motherboard is ready to enroll custom keys via Step 2")
+            self.step3_status_row.set_visible(False)
         else:
             self.sb_badge.set_text("Disabled")
             self.sb_badge.remove_css_class("success")
             self.sb_badge.remove_css_class("warning")
             self.sb_badge.add_css_class("error")
             self.row_sb.set_subtitle("Put BIOS into Setup Mode (Step 1) before signing")
+            self.step3_status_row.set_visible(False)
 
         # sbctl status
         sbctl_ok = check_sbctl_installed()
