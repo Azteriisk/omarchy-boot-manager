@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""
+Omarchy Boot & Secure Boot Manager CLI.
+Command-line interface for status checks, dual-boot configuration,
+and quick reboot controls.
+"""
+
+import sys
+import os
+import json
+import argparse
+import subprocess
+from pathlib import Path
+
+# Add core to sys.path
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from core.boot_detector import (
+    get_firmware_info,
+    get_secure_boot_status,
+    get_hardware_info,
+    get_windows_partitions,
+    get_efi_boot_entries
+)
+from core.limine_manager import (
+    read_limine_config,
+    has_windows_chainload,
+    generate_windows_entry,
+    add_windows_to_limine
+)
+from core.secureboot_manager import (
+    check_sbctl_installed,
+    get_sbctl_status,
+    generate_setup_commands,
+    verify_signatures
+)
+
+# Terminal ANSI colors
+BOLD = "\033[1m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+CYAN = "\033[36m"
+RED = "\033[31m"
+MAGENTA = "\033[35m"
+RESET = "\033[0m"
+
+
+def cmd_status(args):
+    """Prints colorized status report."""
+    fw = get_firmware_info()
+    hw = fw["hardware"]
+    sb = fw["secure_boot"]
+    win = fw["windows_partitions"]
+    boot = fw["boot_entries"]
+
+    limine_cfg = read_limine_config()
+    win_chainloaded = has_windows_chainload(limine_cfg) if limine_cfg else None
+
+    print(f"\n{BOLD}{CYAN}══════════════════════════════════════════════════════════════{RESET}")
+    print(f"{BOLD}{CYAN}      Omarchy Boot & Secure Boot Manager Status               {RESET}")
+    print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════{RESET}\n")
+
+    # Hardware & Motherboard
+    print(f"{BOLD}🖥 Hardware Platform:{RESET}")
+    print(f"  • Motherboard: {BOLD}{hw['vendor']}{RESET} {hw['model']}")
+    print(f"  • BIOS Version: {hw['bios_version'] or 'Unknown'}")
+    print(f"  • BIOS Hotkey:  {BOLD}{hw['guide']['key']}{RESET}")
+
+    # Secure Boot
+    print(f"\n{BOLD}🔒 Secure Boot:{RESET}")
+    if sb["enabled"]:
+        print(f"  • State: {GREEN}{BOLD}ENABLED & ACTIVE{RESET} (Anti-Cheat Ready)")
+    elif sb["setup_mode"]:
+        print(f"  • State: {YELLOW}{BOLD}SETUP MODE (Ready to enroll keys){RESET}")
+    else:
+        print(f"  • State: {RED}{BOLD}DISABLED (User Mode){RESET}")
+
+    sbctl_ok = check_sbctl_installed()
+    print(f"  • sbctl Tool: {'Installed' if sbctl_ok else 'Not installed (available via pacman)'}")
+
+    # Windows Dual-Boot
+    print(f"\n{BOLD}🪟 Windows Dual-Boot:{RESET}")
+    if win:
+        w = win[0]
+        print(f"  • Detected:    {GREEN}{BOLD}Yes{RESET} ({w['title']})")
+        print(f"  • ESP GUID:    {CYAN}{w['partuuid']}{RESET}")
+        print(f"  • Boot ID:     {w['boot_id']}")
+        if win_chainloaded is True:
+            print(f"  • Limine Menu: {GREEN}{BOLD}Configured{RESET} (Chainload present in limine.conf)")
+        elif win_chainloaded is False:
+            print(f"  • Limine Menu: {YELLOW}Not configured yet{RESET} (Run 'omarchy-boot add-windows')")
+        else:
+            print(f"  • Limine Menu: Needs root to inspect /boot/limine.conf")
+    else:
+        print(f"  • Detected:    {YELLOW}No Windows EFI partition found{RESET}")
+
+    # Boot Management
+    print(f"\n{BOLD}⚡ Quick Actions:{RESET}")
+    print(f"  • Reboot into Windows: {BOLD}omarchy-boot reboot windows{RESET}")
+    print(f"  • Reboot into BIOS:    {BOLD}omarchy-boot reboot bios{RESET}")
+    print(f"  • Interactive Setup:   {BOLD}omarchy-boot setup{RESET}")
+    print(f"  • Launch GUI Wizard:   {BOLD}omarchy-boot gui{RESET}")
+    print(f"\n{CYAN}══════════════════════════════════════════════════════════════{RESET}\n")
+
+
+def cmd_json(args):
+    """Outputs all state as JSON."""
+    fw = get_firmware_info()
+    limine_cfg = read_limine_config()
+    fw["limine_windows_configured"] = has_windows_chainload(limine_cfg) if limine_cfg else None
+    fw["sbctl"] = get_sbctl_status()
+    print(json.dumps(fw, indent=2))
+
+
+def cmd_reboot(args):
+    """Handles quick reboot targets."""
+    target = args.target.lower()
+    if target in ("bios", "uefi", "firmware"):
+        print(f"{CYAN}🔄 Rebooting system into UEFI / BIOS Setup...{RESET}")
+        subprocess.run(["systemctl", "reboot", "--firmware-setup"], check=False)
+    elif target in ("windows", "win"):
+        entries = get_efi_boot_entries()
+        win_id = entries.get("windows_id")
+        if not win_id:
+            print(f"{RED}Error: Windows Boot Manager could not be found in efibootmgr.{RESET}")
+            sys.exit(1)
+
+        print(f"{CYAN}🔄 Setting next one-shot boot to Windows Boot Manager (Boot{win_id})...{RESET}")
+        script = f"efibootmgr -n {win_id} && systemctl reboot"
+        if os.geteuid() == 0:
+            subprocess.run(["bash", "-c", script], check=False)
+        else:
+            subprocess.run(["pkexec", "bash", "-c", script], check=False)
+    else:
+        print(f"{RED}Unknown reboot target: {target}. Use 'windows' or 'bios'.{RESET}")
+        sys.exit(1)
+
+
+def cmd_add_windows(args):
+    """Adds Windows chainload entry to /boot/limine.conf."""
+    win = get_windows_partitions()
+    if not win:
+        print(f"{RED}Error: No Windows EFI partition detected.{RESET}")
+        sys.exit(1)
+
+    partuuid = win[0]["partuuid"]
+    label = args.label or "Windows 11"
+    print(f"{CYAN}Adding Windows chainload entry (GUID: {partuuid}) to /boot/limine.conf...{RESET}")
+    ok, msg = add_windows_to_limine(partuuid, label)
+    if ok:
+        print(f"{GREEN}✓ Success:{RESET} {msg}")
+    else:
+        print(f"{RED}✗ Failed:{RESET} {msg}")
+        sys.exit(1)
+
+
+def cmd_setup(args):
+    """Interactive CLI setup wizard."""
+    print(f"\n{BOLD}{CYAN}══════════════════════════════════════════════════════════════{RESET}")
+    print(f"{BOLD}{CYAN}      Omarchy Boot & Secure Boot Setup Wizard                 {RESET}")
+    print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════{RESET}\n")
+
+    hw = get_hardware_info()
+    sb = get_secure_boot_status()
+    guide = hw["guide"]
+
+    print(f"Detected Motherboard: {BOLD}{hw['vendor']} {hw['model']}{RESET}")
+    print(f"Current Secure Boot State: {BOLD}{sb['label']}{RESET}\n")
+
+    if not sb["setup_mode"] and not sb["enabled"]:
+        print(f"{YELLOW}{BOLD}Step 1: Put your BIOS into Setup Mode{RESET}")
+        print("To allow sbctl to enroll custom keys, your BIOS needs to be in 'Setup Mode'.")
+        print(f"For your {hw['vendor']} motherboard:\n")
+        for i, step in enumerate(guide["setup_mode_steps"], 1):
+            print(f"  {i}. {step}")
+
+        print(f"\nWould you like to reboot into BIOS Setup right now to do this?")
+        choice = input("Reboot into BIOS now? [y/N]: ").strip().lower()
+        if choice == "y":
+            subprocess.run(["systemctl", "reboot", "--firmware-setup"], check=False)
+            return
+
+    print(f"\n{CYAN}{BOLD}Step 2: sbctl Key Creation, Enrollment & Signing{RESET}")
+    cmds = generate_setup_commands()
+    print("The following operations will be performed:")
+    for c in cmds:
+        print(f"  • {c}")
+
+    choice = input("\nExecute Secure Boot signing commands now? [Y/n]: ").strip().lower()
+    if choice != "n":
+        full_script = "\n".join(cmds)
+        subprocess.run(["bash", "-c", full_script], check=False)
+
+    # Windows dual boot
+    win = get_windows_partitions()
+    if win:
+        partuuid = win[0]["partuuid"]
+        print(f"\n{CYAN}{BOLD}Step 3: Add Windows to Limine Bootloader{RESET}")
+        print(f"Detected Windows Partition GUID: {partuuid}")
+        choice = input("Add Windows chainload entry to /boot/limine.conf? [Y/n]: ").strip().lower()
+        if choice != "n":
+            ok, msg = add_windows_to_limine(partuuid)
+            print(f"Result: {msg}")
+
+    print(f"\n{GREEN}{BOLD}══════════════════════════════════════════════════════════════{RESET}")
+    print(f"{GREEN}{BOLD}  Setup sequence complete!                                    {RESET}")
+    print(f"{GREEN}{BOLD}  You can now reboot into BIOS and turn Secure Boot ON.        {RESET}")
+    print(f"{GREEN}{BOLD}══════════════════════════════════════════════════════════════{RESET}\n")
+
+
+def cmd_gui(args):
+    """Launches the GTK4 / Libadwaita GUI application."""
+    gui_script = SCRIPT_DIR / "omarchy-boot-gui"
+    if gui_script.exists():
+        os.execv(sys.executable, [sys.executable, str(gui_script)])
+    else:
+        print(f"{RED}Error: omarchy-boot-gui not found at {gui_script}{RESET}")
+        sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Omarchy Boot & Secure Boot Manager",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    # status
+    p_status = subparsers.add_parser("status", help="Show system Secure Boot and Windows dual-boot status")
+    p_status.set_defaults(func=cmd_status)
+
+    # json
+    p_json = subparsers.add_parser("json", help="Output system status as JSON")
+    p_json.set_defaults(func=cmd_json)
+
+    # reboot
+    p_reboot = subparsers.add_parser("reboot", help="Reboot into specific environment")
+    p_reboot.add_argument("target", choices=["windows", "win", "bios", "uefi", "firmware"], help="Reboot target")
+    p_reboot.set_defaults(func=cmd_reboot)
+
+    # add-windows
+    p_add_win = subparsers.add_parser("add-windows", help="Add Windows chainload entry to /boot/limine.conf")
+    p_add_win.add_argument("--label", default="Windows 11", help="Menu label for Windows entry")
+    p_add_win.set_defaults(func=cmd_add_windows)
+
+    # setup
+    p_setup = subparsers.add_parser("setup", help="Interactive terminal wizard for Secure Boot and Limine")
+    p_setup.set_defaults(func=cmd_setup)
+
+    # gui
+    p_gui = subparsers.add_parser("gui", help="Launch graphical wizard application")
+    p_gui.set_defaults(func=cmd_gui)
+
+    args = parser.parse_args()
+    if not args.command:
+        cmd_status(args)
+    else:
+        args.func(args)
+
+
+if __name__ == "__main__":
+    main()

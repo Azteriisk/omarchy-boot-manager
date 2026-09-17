@@ -1,0 +1,461 @@
+#!/usr/bin/env python3
+"""
+omarchy-boot-gui — Libadwaita / GTK4 GUI for Omarchy Boot & Secure Boot Manager.
+Provides an intuitive, friendly wizard for Windows dual-booters,
+setting up sbctl with Microsoft anti-cheat preservation, and quick reboot controls.
+"""
+
+import sys
+import os
+import subprocess
+from pathlib import Path
+
+# Add core to sys.path
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Gtk, Adw, Gio, GLib, Pango
+
+from core.boot_detector import (
+    get_firmware_info,
+    get_secure_boot_status,
+    get_hardware_info,
+    get_windows_partitions,
+    get_efi_boot_entries
+)
+from core.limine_manager import (
+    read_limine_config,
+    has_windows_chainload,
+    add_windows_to_limine
+)
+from core.secureboot_manager import (
+    check_sbctl_installed,
+    get_sbctl_status,
+    generate_setup_commands
+)
+
+
+class BootApp(Adw.Application):
+    def __init__(self):
+        super().__init__(
+            application_id="org.omarchy.bootmanager",
+            flags=Gio.ApplicationFlags.FLAGS_NONE
+        )
+
+    def do_activate(self):
+        win = self.props.active_window
+        if not win:
+            win = BootWindow(application=self)
+        win.present()
+
+
+class BootWindow(Adw.ApplicationWindow):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.set_title("Omarchy Boot & Secure Boot Manager")
+        self.set_default_size(840, 720)
+
+        self.setup_ui()
+        self.refresh_state()
+
+    def setup_ui(self):
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.set_content(main_box)
+
+        # Header Bar
+        header = Adw.HeaderBar()
+        title = Adw.WindowTitle(
+            title="Boot & Secure Boot Manager",
+            subtitle="Windows Dual-Boot & Anti-Cheat Setup"
+        )
+        header.set_title_widget(title)
+
+        # Quick Reboot Buttons in Header
+        reboot_win_btn = Gtk.Button(label="Reboot to Windows")
+        reboot_win_btn.set_tooltip_text("Sets next one-shot boot to Windows and restarts")
+        reboot_win_btn.add_css_class("suggested-action")
+        reboot_win_btn.connect("clicked", self.on_reboot_windows)
+        header.pack_end(reboot_win_btn)
+
+        reboot_bios_btn = Gtk.Button(label="Reboot to BIOS")
+        reboot_bios_btn.set_tooltip_text("Restarts directly into UEFI / BIOS Setup")
+        reboot_bios_btn.connect("clicked", self.on_reboot_bios)
+        header.pack_end(reboot_bios_btn)
+
+        main_box.append(header)
+
+        # View Switcher Bar & Stack
+        self.view_stack = Adw.ViewStack()
+        view_switcher_title = Adw.ViewSwitcherTitle()
+        view_switcher_title.set_stack(self.view_stack)
+        header.set_title_widget(view_switcher_title)
+
+        # Page 1: Dashboard
+        self.dashboard_page = self.build_dashboard_page()
+        self.view_stack.add_titled_with_icon(
+            self.dashboard_page,
+            "dashboard",
+            "Overview",
+            "computer-symbolic"
+        )
+
+        # Page 2: Secure Boot Wizard
+        self.wizard_page = self.build_wizard_page()
+        self.view_stack.add_titled_with_icon(
+            self.wizard_page,
+            "wizard",
+            "Secure Boot Wizard",
+            "security-high-symbolic"
+        )
+
+        # Page 3: Limine & Dual-Boot
+        self.limine_page = self.build_limine_page()
+        self.view_stack.add_titled_with_icon(
+            self.limine_page,
+            "limine",
+            "Limine Dual-Boot",
+            "drive-multidisk-symbolic"
+        )
+
+        main_box.append(self.view_stack)
+
+    def build_dashboard_page(self) -> Gtk.Widget:
+        scroll = Gtk.ScrolledWindow()
+        clamp = Adw.Clamp(maximum_size=800)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        box.set_margin_top(24)
+        box.set_margin_bottom(24)
+        box.set_margin_start(24)
+        box.set_margin_end(24)
+        clamp.set_child(box)
+        scroll.set_child(clamp)
+
+        # System Status Group
+        self.status_group = Adw.PreferencesGroup(
+            title="System Security & Boot Status",
+            description="Hardware state and active anti-cheat readiness"
+        )
+        box.append(self.status_group)
+
+        self.row_sb = Adw.ActionRow(title="Secure Boot Status")
+        self.sb_badge = Gtk.Label()
+        self.sb_badge.add_css_class("pill")
+        self.row_sb.add_suffix(self.sb_badge)
+        self.status_group.add(self.row_sb)
+
+        self.row_board = Adw.ActionRow(title="Motherboard & Firmware")
+        self.board_label = Gtk.Label()
+        self.row_board.add_suffix(self.board_label)
+        self.status_group.add(self.row_board)
+
+        self.row_sbctl = Adw.ActionRow(title="sbctl Key Manager")
+        self.sbctl_label = Gtk.Label()
+        self.row_sbctl.add_suffix(self.sbctl_label)
+        self.status_group.add(self.row_sbctl)
+
+        # Windows Dual-Boot Group
+        self.win_group = Adw.PreferencesGroup(
+            title="Windows 11 Dual-Boot Integration",
+            description="Status of Windows partition detection and Limine chainload"
+        )
+        box.append(self.win_group)
+
+        self.row_win_detected = Adw.ActionRow(title="Windows Installation")
+        self.win_detected_label = Gtk.Label()
+        self.row_win_detected.add_suffix(self.win_detected_label)
+        self.win_group.add(self.row_win_detected)
+
+        self.row_win_guid = Adw.ActionRow(title="EFI Partition GUID")
+        self.win_guid_label = Gtk.Label()
+        self.win_guid_label.set_selectable(True)
+        self.row_win_guid.add_suffix(self.win_guid_label)
+        self.win_group.add(self.row_win_guid)
+
+        self.row_limine_status = Adw.ActionRow(title="Limine Chainloading")
+        self.limine_status_label = Gtk.Label()
+        self.row_limine_status.add_suffix(self.limine_status_label)
+        self.win_group.add(self.row_limine_status)
+
+        return scroll
+
+    def build_wizard_page(self) -> Gtk.Widget:
+        scroll = Gtk.ScrolledWindow()
+        clamp = Adw.Clamp(maximum_size=800)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        box.set_margin_top(24)
+        box.set_margin_bottom(24)
+        box.set_margin_start(24)
+        box.set_margin_end(24)
+        clamp.set_child(box)
+        scroll.set_child(clamp)
+
+        intro_group = Adw.PreferencesGroup(
+            title="How It Works: Zero-BIOS Secure Boot",
+            description="Anti-cheat games (Valorant, EAC, FACEIT) require Secure Boot in Windows. "
+                        "By enrolling your own keys while preserving Microsoft's OEM keys (-m), "
+                        "both Windows and Omarchy boot with Secure Boot permanently enabled 24/7."
+        )
+        box.append(intro_group)
+
+        # Step 1
+        step1_group = Adw.PreferencesGroup(
+            title="Step 1: Put Motherboard into Setup Mode",
+            description="Your motherboard must be placed into Setup Mode (clearing existing PK keys) once to allow enrolling custom keys."
+        )
+        box.append(step1_group)
+
+        self.step1_guide_row = Adw.ExpanderRow(title="View Motherboard Guide", subtitle="Vendor-specific BIOS instructions")
+        step1_group.add(self.step1_guide_row)
+
+        self.step1_instructions = Gtk.Label(xalign=0)
+        self.step1_instructions.set_wrap(True)
+        self.step1_instructions.set_margin_top(12)
+        self.step1_instructions.set_margin_bottom(12)
+        self.step1_instructions.set_margin_start(16)
+        self.step1_instructions.set_margin_end(16)
+        self.step1_guide_row.add_row(self.step1_instructions)
+
+        bios_btn_row = Adw.ActionRow(title="Enter UEFI / BIOS Setup", subtitle="Reboot directly into firmware settings without pressing hotkeys")
+        btn_fw = Gtk.Button(label="Reboot to BIOS")
+        btn_fw.connect("clicked", self.on_reboot_bios)
+        bios_btn_row.add_suffix(btn_fw)
+        step1_group.add(bios_btn_row)
+
+        # Step 2
+        step2_group = Adw.PreferencesGroup(
+            title="Step 2: Enroll Custom Keys & Sign Bootloaders",
+            description="Generates your master keys, enrolls them with Microsoft OEM keys, and signs Limine and kernel UKIs."
+        )
+        box.append(step2_group)
+
+        run_wizard_row = Adw.ActionRow(
+            title="Launch Automated Signing Wizard",
+            subtitle="Runs 'sbctl create-keys', 'enroll-keys -m', and signs /boot/EFI/"
+        )
+        btn_run_wizard = Gtk.Button(label="Run Wizard")
+        btn_run_wizard.add_css_class("suggested-action")
+        btn_run_wizard.connect("clicked", self.on_run_cli_wizard)
+        run_wizard_row.add_suffix(btn_run_wizard)
+        step2_group.add(run_wizard_row)
+
+        # Step 3
+        step3_group = Adw.PreferencesGroup(
+            title="Step 3: Turn Secure Boot ON in BIOS",
+            description="Once files are signed, return to your BIOS and turn Secure Boot Enabled. Windows and Omarchy will boot without toggling settings ever again."
+        )
+        box.append(step3_group)
+
+        return scroll
+
+    def build_limine_page(self) -> Gtk.Widget:
+        scroll = Gtk.ScrolledWindow()
+        clamp = Adw.Clamp(maximum_size=800)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        box.set_margin_top(24)
+        box.set_margin_bottom(24)
+        box.set_margin_start(24)
+        box.set_margin_end(24)
+        clamp.set_child(box)
+        scroll.set_child(clamp)
+
+        cfg_group = Adw.PreferencesGroup(
+            title="Limine Windows Chainloading",
+            description="Enables launching Windows directly from the Limine boot menu on startup."
+        )
+        box.append(cfg_group)
+
+        self.btn_add_win = Gtk.Button(label="Add Windows to Limine")
+        self.btn_add_win.add_css_class("suggested-action")
+        self.btn_add_win.connect("clicked", self.on_add_windows_to_limine)
+
+        self.limine_action_row = Adw.ActionRow(
+            title="Configure Windows in /boot/limine.conf",
+            subtitle="Automatically injects chainload entry using the detected ESP partition GUID"
+        )
+        self.limine_action_row.add_suffix(self.btn_add_win)
+        cfg_group.add(self.limine_action_row)
+
+        # Code preview
+        preview_group = Adw.PreferencesGroup(
+            title="Generated Entry Preview",
+            description="The exact configuration syntax written to /boot/limine.conf"
+        )
+        box.append(preview_group)
+
+        self.limine_preview = Gtk.Label(xalign=0)
+        self.limine_preview.set_wrap(True)
+        self.limine_preview.set_selectable(True)
+        self.limine_preview.add_css_class("monospace")
+        preview_group.add(self.limine_preview)
+
+        return scroll
+
+    def refresh_state(self):
+        """Refreshes hardware and boot status."""
+        fw = get_firmware_info()
+        hw = fw["hardware"]
+        sb = fw["secure_boot"]
+        win = fw["windows_partitions"]
+        guide = hw["guide"]
+
+        # Motherboard label
+        self.board_label.set_text(f"{hw['vendor']} ({hw['model']})")
+
+        # Secure boot badge
+        if sb["enabled"]:
+            self.sb_badge.set_text("Enabled & Active")
+            self.sb_badge.remove_css_class("warning")
+            self.sb_badge.remove_css_class("error")
+            self.sb_badge.add_css_class("success")
+            self.row_sb.set_subtitle("Anti-cheat games and Windows run smoothly")
+        elif sb["setup_mode"]:
+            self.sb_badge.set_text("Setup Mode")
+            self.sb_badge.remove_css_class("success")
+            self.sb_badge.remove_css_class("error")
+            self.sb_badge.add_css_class("warning")
+            self.row_sb.set_subtitle("Motherboard is ready to enroll custom keys via Step 2")
+        else:
+            self.sb_badge.set_text("Disabled")
+            self.sb_badge.remove_css_class("success")
+            self.sb_badge.remove_css_class("warning")
+            self.sb_badge.add_css_class("error")
+            self.row_sb.set_subtitle("Put BIOS into Setup Mode (Step 1) before signing")
+
+        # sbctl status
+        sbctl_ok = check_sbctl_installed()
+        self.sbctl_label.set_text("Installed" if sbctl_ok else "Not installed (will auto-install)")
+
+        # Windows detection
+        if win:
+            w = win[0]
+            self.win_detected_label.set_text("Detected")
+            self.row_win_detected.set_subtitle(w["title"])
+            self.win_guid_label.set_text(w["partuuid"])
+
+            # Preview in Limine tab
+            preview_text = (
+                f"/Windows 11\n"
+                f"    comment: Boot Windows Boot Manager\n"
+                f"    protocol: efi_chainload\n"
+                f"    image_path: guid({w['partuuid']}):/EFI/Microsoft/Boot/bootmgfw.efi"
+            )
+            self.limine_preview.set_text(preview_text)
+        else:
+            self.win_detected_label.set_text("Not Found")
+            self.win_guid_label.set_text("N/A")
+            self.limine_preview.set_text("No Windows EFI partition detected.")
+
+        # Limine check
+        limine_cfg = read_limine_config()
+        if limine_cfg is not None:
+            has_chain = has_windows_chainload(limine_cfg)
+            self.limine_status_label.set_text("Configured" if has_chain else "Not in limine.conf")
+            if has_chain:
+                self.btn_add_win.set_label("Already Configured")
+                self.btn_add_win.set_sensitive(False)
+        else:
+            self.limine_status_label.set_text("Ready to Configure")
+
+        # Motherboard guide text
+        guide_lines = [
+            f"Motherboard Brand: {guide['vendor']}",
+            f"BIOS Hotkey: {guide['key']}",
+            f"Settings Menu: {guide['menu_path']}\n",
+            "Steps to Enter Setup Mode:"
+        ]
+        for i, step in enumerate(guide["setup_mode_steps"], 1):
+            guide_lines.append(f"  {i}. {step}")
+
+        guide_lines.append("\nSteps to Re-enable Secure Boot Afterwards:")
+        for i, step in enumerate(guide["enable_steps"], 1):
+            guide_lines.append(f"  {i}. {step}")
+
+        self.step1_instructions.set_text("\n".join(guide_lines))
+        self.step1_guide_row.set_subtitle(f"Configured for {hw['vendor']}")
+
+    def on_reboot_windows(self, button):
+        entries = get_efi_boot_entries()
+        win_id = entries.get("windows_id")
+        if not win_id:
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                heading="Windows Not Found",
+                body="Windows Boot Manager could not be located in efibootmgr."
+            )
+            dialog.add_response("ok", "OK")
+            dialog.present()
+            return
+
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Reboot into Windows?",
+            body=f"Your PC will restart directly into Windows Boot Manager (Boot{win_id}) for the next boot only."
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("reboot", "Reboot Now")
+        dialog.set_response_appearance("reboot", Adw.ResponseAppearance.SUGGESTED)
+
+        def on_response(d, response):
+            if response == "reboot":
+                subprocess.Popen(["omarchy-boot", "reboot", "windows"])
+
+        dialog.connect("response", on_response)
+        dialog.present()
+
+    def on_reboot_bios(self, button):
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Reboot into UEFI / BIOS Setup?",
+            body="Your system will restart directly into the motherboard firmware setup screen."
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("reboot", "Reboot to BIOS")
+        dialog.set_response_appearance("reboot", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def on_response(d, response):
+            if response == "reboot":
+                subprocess.Popen(["omarchy-boot", "reboot", "bios"])
+
+        dialog.connect("response", on_response)
+        dialog.present()
+
+    def on_add_windows_to_limine(self, button):
+        win = get_windows_partitions()
+        if not win:
+            return
+
+        ok, msg = add_windows_to_limine(win[0]["partuuid"])
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading="Limine Configuration",
+            body=msg
+        )
+        dialog.add_response("ok", "OK")
+        dialog.present()
+        self.refresh_state()
+
+    def on_run_cli_wizard(self, button):
+        # Open in terminal emulator
+        term_cmd = None
+        for term in ["ghostty", "foot", "kitty", "alacritty", "xterm"]:
+            if shutil.which(term):
+                term_cmd = term
+                break
+
+        if term_cmd:
+            subprocess.Popen([term_cmd, "-e", "omarchy-boot", "setup"])
+        else:
+            subprocess.Popen(["omarchy-boot", "setup"])
+
+
+def main():
+    app = BootApp()
+    app.run(sys.argv)
+
+
+if __name__ == "__main__":
+    import shutil
+    main()

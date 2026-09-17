@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Omarchy Boot & Secure Boot Manager
+GenericName=Boot & Secure Boot Manager
+Comment=Windows dual-boot chainloading, sbctl Secure Boot enrollment for anti-cheat games, and quick reboot controls
+Exec=omarchy-boot gui
+Icon=security-high
+Terminal=false
+Type=Application
+Categories=Settings;System;HardwareSettings;
+Keywords=boot;windows;secure boot;bios;anticheat;limine;uefi;vanguard;eac;faceit;
