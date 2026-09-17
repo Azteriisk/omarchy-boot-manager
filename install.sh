@@ -94,7 +94,7 @@ lines = [
     f"  {block_marker_start}",
     '  "setup.boot": {"icon": "󰌿", "label": "Boot & Secure Boot", "description": "Windows dual-boot & Secure Boot configuration", "aliases": ["boot", "secure-boot", "windows-boot", "bios-setup"], "action": "omarchy-boot gui"},',
     '  "system.reboot-windows": {"icon": "", "label": "Reboot into Windows", "description": "One-shot boot directly into Windows for next boot", "aliases": ["reboot-windows", "windows"], "action": "omarchy-boot reboot windows"},',
-    '  "system.reboot-bios": {"icon": "󰒔", "label": "Reboot into BIOS Setup", "description": "Reboot straight to motherboard UEFI firmware", "aliases": ["reboot-bios", "bios", "uefi"], "action": "omarchy-boot reboot bios"},',
+    '  "system.reboot-bios": {"icon": "󰒔", "label": "Reboot into BIOS Setup", "description": "Reboot straight to motherboard UEFI firmware", "aliases": ["reboot-bios", "bios", "uefi"], "action": "omarchy-boot reboot bios"}',
     f"  {block_marker_end}"
 ]
 insertion = "\n".join(lines) + "\n"
