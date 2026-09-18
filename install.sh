@@ -24,6 +24,7 @@ mkdir -p "$(dirname "$MENU_CONFIG")"
 if [ "$SCRIPT_DIR" != "$TARGET_DIR" ]; then
   mkdir -p "$TARGET_DIR"
   cp -a "$SCRIPT_DIR/manifest.json" \
+        "$SCRIPT_DIR/Service.qml" \
         "$SCRIPT_DIR/omarchy-boot.desktop" \
         "$SCRIPT_DIR/scripts" \
         "$SCRIPT_DIR/install.sh" \

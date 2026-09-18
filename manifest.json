@@ -1,12 +1,16 @@
 {
   "schemaVersion": 1,
   "id": "azterisk.boot",
-  "name": "Omarchy Boot & Secure Boot Manager",
+  "name": "Boot & Secure Boot Manager",
   "version": "1.0.0",
   "author": "Azteriisk",
+  "license": "MIT",
   "description": "Windows dual-boot chainloading, sbctl Secure Boot enrollment for anti-cheat games, and quick reboot controls.",
   "kinds": [
     "service"
   ],
-  "keepLoaded": false
+  "keepLoaded": false,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
 }
