@@ -1,36 +1,38 @@
-# Omarchy Boot & Secure Boot Manager (`azterisk.boot`)
+# Omarchy Boot and Secure Boot Manager
 
-A unified desktop application, CLI helper, and Omarchy Menu extension that bridges the gap between **Windows** and **Omarchy Linux**. 
+An Omarchy plugin that bridges the gap between Windows and Omarchy Linux for users who dual-boot or plan to transition from Windows.
 
-Built for users dual-booting with Windows or preparing for a seamless transition, it solves the two biggest pain points in Linux gaming and dual-booting:
-1. **Zero-BIOS Anti-Cheat Compatibility**: Enrolls custom Secure Boot keys alongside Microsoft OEM keys (`sbctl enroll-keys -m`) so games like **Valorant (Vanguard)**, **EasyAntiCheat**, and **FACEIT** run in Windows while Omarchy boots smoothly with Secure Boot permanently enabled 24/7.
-2. **Instant Limine Dual-Boot Integration**: Automatically detects Windows EFI System Partitions and injects chainload entries into Limine with one click.
-3. **One-Click Quick Boots**: Reboot straight into Windows (for the next boot only via `efibootmgr -n`) or directly into your motherboard's UEFI BIOS setup (`systemctl reboot --firmware-setup`) without hammering keyboard hotkeys during POST.
+It solves the two biggest pain points in Linux gaming and dual-booting:
 
----
-
-## ✨ Key Features
-
-- 🔒 **Permanent Secure Boot Setup**:
-  - Automatically identifies your motherboard model (ASUS, MSI, Gigabyte, ASRock, etc.) and provides vendor-specific instructions to enter Setup Mode.
-  - Automates key generation, Microsoft OEM preservation (`-m`), and EFI signing for both Limine and all UKI kernels (`omarchy_linux.efi`, `linux-omarchy.efi`).
-  - Once configured, Secure Boot stays enabled 24/7—no entering BIOS to switch OSes!
-- 🪟 **Automatic Windows Chainloading**:
-  - Scans GPT partition tables and EFI variables to find the exact Windows ESP partition GUID.
-  - Generates and writes valid Limine `efi_chainload` entries into `/boot/limine.conf`.
-- ⚡ **Omarchy Menu Integration**:
-  - **Setup Menu**: Adds `Boot & Secure Boot` (`omarchy-boot gui`).
-  - **System Menu**: Adds one-click `Reboot into Windows` and `Reboot into BIOS Setup`.
-  - **Searchable**: Search "windows", "anticheat", "bios", or "secure boot" in the Omarchy launcher.
-- 🎨 **Modern Libadwaita / GTK4 GUI (`omarchy-boot-gui`)**:
-  - Overview dashboard with live security badges, motherboard information, and partition details.
-  - Step-by-step interactive wizard with confirmation dialogs.
-- 💻 **Robust Command Line Interface (`omarchy-boot`)**:
-  - `status`, `json`, `reboot windows`, `reboot bios`, `add-windows`, `setup`.
+1. **Anti-Cheat Compatibility via Permanent Secure Boot**: Enrolls custom Secure Boot keys alongside Microsoft OEM keys so games that require Secure Boot (Valorant/Vanguard, EasyAntiCheat titles, FACEIT) work in Windows while Omarchy boots cleanly with Secure Boot enabled permanently.
+2. **Limine Dual-Boot Integration**: Automatically detects Windows EFI System Partitions and injects a chainload entry into Limine with one click.
+3. **Quick Reboot Controls**: Reboot directly into Windows (one-shot via `efibootmgr -n`) or into UEFI/BIOS setup (`systemctl reboot --firmware-setup`) without holding keyboard hotkeys during POST.
 
 ---
 
-## 📦 Installation
+## Screenshots
+
+### Overview Dashboard
+
+![Overview tab showing Secure Boot status, motherboard info, and Windows detection](docs/screenshots/overview.png)
+
+### Secure Boot Setup Wizard
+
+![Three-step wizard for sbctl key enrollment and EFI signing](docs/screenshots/wizard.png)
+
+### Limine Dual-Boot Configuration
+
+![Limine chainload entry preview and one-click Windows configuration](docs/screenshots/limine.png)
+
+### Omarchy Menu Integration
+
+The plugin adds three entries to the Omarchy menu. Search "boot", "bios", or "windows" in the launcher.
+
+![Boot and Secure Boot entry in the Omarchy Setup menu](docs/screenshots/menu.png)
+
+---
+
+## Installation
 
 ```bash
 git clone https://github.com/Azteriisk/omarchy-boot-manager.git
@@ -39,82 +41,115 @@ chmod +x install.sh
 ./install.sh
 ```
 
-The installer will:
-1. Symlink CLI binaries to `~/.local/bin/omarchy-boot` and `~/.local/bin/omarchy-boot-gui`.
-2. Install the desktop launcher to `~/.local/share/applications/omarchy-boot.desktop`.
-3. Integrate `setup.boot`, `system.reboot-windows`, and `system.reboot-bios` into `~/.config/omarchy/extensions/omarchy-menu.jsonc`.
+The installer:
+
+1. Copies the plugin to `~/.config/omarchy/plugins/azterisk.boot/`.
+2. Symlinks `omarchy-boot` and `omarchy-boot-gui` into `~/.local/bin/`.
+3. Installs the `.desktop` launcher.
+4. Merges three entries into `~/.config/omarchy/extensions/omarchy-menu.jsonc`:
+   - **Setup > Boot and Secure Boot** — opens the GUI
+   - **System > Reboot into Windows** — one-shot boot to Windows
+   - **System > Reboot into BIOS Setup** — direct firmware entry
 
 ---
 
-## 🚀 Usage
+## Secure Boot Setup Runbook
 
-### 1. Graphical Interface (GUI)
-Launch **"Omarchy Boot & Secure Boot Manager"** from the Omarchy Application Menu, or run:
+### Why this exists
+
+The UEFI specification makes `SecureBoot` a read-only runtime variable. No software can toggle BIOS Secure Boot on or off from within a running OS. The standard workaround of disabling Secure Boot to run Linux breaks anti-cheat systems that verify `SecureBoot == 1` when Windows boots.
+
+The correct solution is to enroll your own Platform Key (PK) alongside Microsoft's certificates. Your bootloader and kernels are signed with your key. Windows still sees legitimate Microsoft CA certs. Secure Boot stays enabled for both operating systems permanently.
+
+### Step 1: Put BIOS into Setup Mode
+
+Setup Mode clears the existing Platform Key, which allows new keys to be enrolled. The GUI detects your motherboard vendor and shows exact BIOS navigation steps.
+
+General procedure:
+
+1. Reboot into BIOS (F2 or DEL on most boards, or use "Reboot into BIOS Setup" from the Omarchy menu).
+2. Navigate to the Secure Boot section (usually under Boot or Security).
+3. Find "Key Management" or "Secure Boot Keys" and choose "Clear" or "Delete All Keys".
+4. Save and boot back into Omarchy.
+
+### Step 2: Run the Wizard
+
+In the GUI, go to the **Secure Boot Wizard** tab and click **Run Wizard**. This opens a terminal running `omarchy-boot setup`, which:
+
+1. Installs `sbctl` if not present.
+2. Generates your custom PK, KEK, and db keys.
+3. Enrolls them alongside Microsoft OEM certificates (`sbctl enroll-keys -m`).
+4. Discovers and signs all EFI binaries with `sbctl sign -s`:
+   - `BOOTX64.EFI` and `LIMINE_X64.EFI` (bootloader)
+   - All kernel UKIs in `/boot/EFI/Linux/` (e.g. `omarchy_linux-omarchy.efi`, `omarchy_linux.efi`)
+   - `fwupdx64.efi` (firmware updater)
+   - All snapshot kernel history EFIs in `limine_history/` directories
+5. Runs `sbctl verify` to confirm all registered files are signed.
+
+The `-s` flag on live kernel files registers them with sbctl's pacman hook so they are automatically re-signed on every kernel update.
+
+### Step 3: Enable Secure Boot in BIOS
+
+After the wizard completes, the GUI shows a green "Ready to Activate" badge and a "Reboot to BIOS Now" button. Click it, then:
+
+1. Navigate to Secure Boot settings.
+2. Set OS Type to "Windows UEFI Mode" (ASUS) or enable Secure Boot directly.
+3. Save and exit.
+
+Omarchy and Windows will both boot with Secure Boot permanently active.
+
+---
+
+## Command Line Interface
 
 ```bash
+# Full status report
+omarchy-boot status
+
+# Status as JSON (for scripts or shell widgets)
+omarchy-boot json
+
+# Reboot into Windows on next boot only (returns to Omarchy after)
+omarchy-boot reboot windows
+
+# Reboot directly into UEFI/BIOS firmware setup
+omarchy-boot reboot bios
+
+# Add detected Windows partition chainload entry to /boot/limine.conf
+omarchy-boot add-windows
+
+# Interactive terminal setup wizard
+omarchy-boot setup
+
+# Launch the graphical interface
 omarchy-boot gui
 ```
 
-- **Overview Tab**: Check live status of Secure Boot, motherboard model, and Windows detection.
-- **Secure Boot Wizard Tab**: Follow the 3-step walkthrough to configure permanent Secure Boot.
-- **Limine Tab**: Preview and inject Windows chainload entry into `/boot/limine.conf`.
+---
 
-### 2. Command Line Interface (CLI)
+## Technical Notes
 
-```bash
-# View complete system status summary
-omarchy-boot status
+**ESP mount permissions**: Omarchy mounts the EFI System Partition with `fmask=0077`, making `/boot` unreadable by non-root users. The plugin accounts for this by using `sudo find` for EFI discovery at signing time rather than Python `glob()`, which silently returns empty results for unreadable directories.
 
-# Output status as JSON (for scripts or widgets)
-omarchy-boot json
+**Snapshot kernels**: Limine with `limine-snapper-sync` stores immutable kernel copies for each Btrfs snapshot in a `limine_history/` directory on the ESP. These are not tracked by sbctl's signing database since they never change, but must be individually signed for Secure Boot to permit booting into snapshots. The wizard handles this automatically.
 
-# Reboot directly into Windows (one-shot next boot only)
-omarchy-boot reboot windows
+**Microsoft OEM key preservation**: The `-m` flag in `sbctl enroll-keys -m` includes Microsoft's CA and KEK certificates alongside your custom keys. This is required for Windows Boot Manager and Windows anti-cheat systems to continue working. Omitting it results in Windows refusing to boot under Secure Boot.
 
-# Reboot directly into motherboard UEFI BIOS setup
-omarchy-boot reboot bios
-
-# Add detected Windows partition to Limine bootloader
-omarchy-boot add-windows
-
-# Launch interactive terminal setup wizard
-omarchy-boot setup
-```
+**Key re-enrollment**: If you reinstall Omarchy or reset your BIOS to factory defaults, you will need to re-run the wizard. Your previous keys are stored in `/var/lib/sbctl/` and can be re-enrolled without regenerating them.
 
 ---
 
-## 🛡️ Anti-Cheat & Secure Boot Runbook
-
-Why does this exist?
-Under UEFI specifications, the `SecureBoot` variable is read-only at runtime. No software or bootloader can toggle BIOS Secure Boot on/off.
-
-Instead of toggling BIOS settings manually:
-1. **Put your motherboard in Setup Mode**:
-   - Clear existing Platform Keys (PK) in BIOS (e.g. `Key Management` -> `Clear Secure Boot Keys`).
-2. **Run the Wizard**:
-   - Click "Run Wizard" in `omarchy-boot gui` or run `omarchy-boot setup`.
-   - Generates custom keys and enrolls them with `-m` (`sbctl enroll-keys -m`).
-   - Signs Limine (`BOOTX64.EFI`, `LIMINE_X64.EFI`) and Omarchy UKIs (`/boot/EFI/Linux/*.efi`).
-3. **Turn Secure Boot ON in BIOS**:
-   - Set Secure Boot to **Enabled**.
-
-**Result:**
-- **Windows Anti-Cheat** (Vanguard, EAC, FACEIT) sees Secure Boot is **ENABLED** with official Microsoft CA certificates enrolled.
-- **Omarchy** boots cleanly because Limine and your kernel images are signed with your custom enrolled keys.
-
----
-
-## 🗑️ Uninstallation
-
-To restore default settings and remove menu extensions:
+## Uninstallation
 
 ```bash
 cd omarchy-boot-manager
 ./uninstall.sh
 ```
 
+This removes the plugin directory, symlinks, desktop launcher, and menu entries.
+
 ---
 
-## 📄 License
+## License
 
-MIT © [Azteriisk](https://github.com/Azteriisk)
+MIT - [Azteriisk](https://github.com/Azteriisk)
