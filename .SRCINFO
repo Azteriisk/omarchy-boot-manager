@@ -1,0 +1,20 @@
+pkgbase = omarchy-boot-manager-git
+	pkgdesc = Windows dual-boot chainloader, sbctl Secure Boot enrollment for anti-cheat games, and reboot controls for Omarchy
+	pkgver = 1.0.0
+	pkgrel = 1
+	url = https://github.com/Azteriisk/omarchy-boot-manager
+	arch = any
+	license = MIT
+	makedepends = git
+	depends = python
+	depends = python-gobject
+	depends = gtk4
+	depends = libadwaita
+	depends = efibootmgr
+	depends = sbctl
+	provides = omarchy-boot-manager
+	conflicts = omarchy-boot-manager
+	source = git+https://github.com/Azteriisk/omarchy-boot-manager.git
+	sha256sums = SKIP
+
+pkgname = omarchy-boot-manager-git
