@@ -439,21 +439,44 @@ function Run-Setup {
     $biosShortcut.Save()
     Write-Host "Created Desktop Shortcut: 'Reboot into BIOS'" -ForegroundColor Green
 
-    # PowerShell profile helper
-    $profileDir = Split-Path -Parent $PROFILE
-    if (-not (Test-Path $profileDir)) {
-        New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+    # 1. Add windows directory to persistent User PATH
+    $userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+    if ($userPath -notmatch [regex]::Escape($ScriptDir)) {
+        [Environment]::SetEnvironmentVariable("PATH", "$userPath;$ScriptDir", "User")
+        $env:PATH = "$env:PATH;$ScriptDir"
+        Write-Host "Added '$ScriptDir' to persistent User PATH." -ForegroundColor Green
     }
+
+    # 2. If ~/.local/bin exists in User profile, install CLI wrappers
+    $localBin = Join-Path $env:USERPROFILE ".local\bin"
+    if (Test-Path $localBin) {
+        Copy-Item (Join-Path $ScriptDir "reboot-omarchy.cmd") (Join-Path $localBin "reboot-omarchy.cmd") -Force
+        Copy-Item (Join-Path $ScriptDir "reboot-bios.cmd") (Join-Path $localBin "reboot-bios.cmd") -Force
+        Copy-Item (Join-Path $ScriptDir "omarchy-boot.cmd") (Join-Path $localBin "omarchy-boot.cmd") -Force
+        Write-Host "Installed CLI binaries into $localBin" -ForegroundColor Green
+    }
+
+    # 3. Configure both Windows PowerShell 5.1 and PowerShell 7 profiles
     $helperFunc = @"
 
 # Omarchy Boot Manager Helper
 function reboot-omarchy { & '$PSCommandPath' reboot omarchy }
 function reboot-bios { & '$PSCommandPath' reboot bios }
 "@
-    if (-not (Test-Path $PROFILE) -or (Get-Content $PROFILE -Raw) -notmatch "reboot-omarchy") {
-        Add-Content -Path $PROFILE -Value $helperFunc
-        Write-Host "Added 'reboot-omarchy' and 'reboot-bios' functions to your PowerShell `$PROFILE." -ForegroundColor Green
+    $profilePaths = @(
+        (Join-Path $env:USERPROFILE "Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"),
+        (Join-Path $env:USERPROFILE "Documents\PowerShell\Microsoft.PowerShell_profile.ps1")
+    )
+    foreach ($p in $profilePaths) {
+        $pDir = Split-Path -Parent $p
+        if (-not (Test-Path $pDir)) {
+            New-Item -ItemType Directory -Path $pDir -Force | Out-Null
+        }
+        if (-not (Test-Path $p) -or (Get-Content $p -Raw) -notmatch "reboot-omarchy") {
+            Add-Content -Path $p -Value $helperFunc
+        }
     }
+    Write-Host "Configured PowerShell profiles (PowerShell 5.1 & PowerShell 7)." -ForegroundColor Green
 
     Write-Host ""
     Write-Host "============================================================" -ForegroundColor Green
