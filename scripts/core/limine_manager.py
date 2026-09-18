@@ -38,10 +38,18 @@ def read_limine_config(path: Optional[Path] = None) -> Optional[str]:
     except Exception:
         pass
 
-    # Attempt via cat
+    # Attempt via cat (works if user has read access)
     try:
         res = subprocess.run(["cat", str(cfg_path)], capture_output=True, text=True, check=False)
-        if res.returncode == 0:
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout
+    except Exception:
+        pass
+
+    # Attempt via sudo -n cat (handles fmask=0077 ESP mounts where /boot is root-only)
+    try:
+        res = subprocess.run(["sudo", "-n", "cat", str(cfg_path)], capture_output=True, text=True, check=False)
+        if res.returncode == 0 and res.stdout.strip():
             return res.stdout
     except Exception:
         pass
