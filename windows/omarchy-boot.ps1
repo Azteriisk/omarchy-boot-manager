@@ -18,10 +18,22 @@ param(
     [string]$Guid = ""
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
+if (Get-Variable -Name "PSNativeCommandUseErrorActionPreference" -ErrorAction SilentlyContinue) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ConfigFile = Join-Path $ScriptDir "config.json"
 $TaskName = "RebootToOmarchy"
+
+function Test-ScheduledTaskExists {
+    cmd.exe /c "schtasks /query /tn `"$TaskName`" >nul 2>&1"
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Remove-ScheduledTaskIfExists {
+    cmd.exe /c "schtasks /query /tn `"$TaskName`" >nul 2>&1 && schtasks /delete /tn `"$TaskName`" /f >nul 2>&1"
+}
 
 function Test-IsAdmin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -203,9 +215,8 @@ function Show-Status {
     }
 
     # Scheduled Task Status
-    $task = schtasks /query /tn $TaskName 2>$null
     Write-Host "`n  One-Click Fast Switch Task:" -ForegroundColor White
-    if ($LASTEXITCODE -eq 0) {
+    if (Test-ScheduledTaskExists) {
         Write-Host "   - Status: Installed ($TaskName)" -ForegroundColor Green
         Write-Host "   - Perms:  Elevated (zero UAC prompts on swap)" -ForegroundColor DarkGreen
     } else {
@@ -260,10 +271,9 @@ function Invoke-Reboot {
 
     if ($TargetName -in @("omarchy", "linux", "limine", "")) {
         # Check if scheduled task exists
-        $null = schtasks /query /tn $TaskName 2>$null
-        if ($LASTEXITCODE -eq 0) {
+        if (Test-ScheduledTaskExists) {
             Write-Host "Triggering fast swap to Omarchy via elevated task..." -ForegroundColor Cyan
-            schtasks /run /tn $TaskName
+            cmd.exe /c "schtasks /run /tn `"$TaskName`" >nul 2>&1"
             Write-Host "Reboot initiated." -ForegroundColor Green
             return
         }
@@ -286,8 +296,9 @@ function Run-Setup {
     Write-Host "============================================================" -ForegroundColor Cyan
     Write-Host ""
 
-    Write-Host "Scanning UEFI firmware entries..." -ForegroundColor Cyan
-    $entries = Parse-BcdFirmwareEntries
+    # Check existing config
+    $existingCfg = Get-SavedConfig
+    $selected = $null
 
     if ($Guid) {
         $cleanGuid = if ($Guid.StartsWith("{")) { $Guid } else { "{$Guid}" }
@@ -295,7 +306,21 @@ function Run-Setup {
             Identifier  = $cleanGuid
             Description = "Specified Omarchy Target"
         }
-    } else {
+    } elseif ($existingCfg -and $existingCfg.omarchy_guid) {
+        Write-Host "Found previously configured Omarchy entry: $($existingCfg.omarchy_description) ($($existingCfg.omarchy_guid))`n" -ForegroundColor Green
+        $keep = Read-Host "Keep this entry? [Y/n]"
+        if ($keep.Trim().ToLower() -ne "n") {
+            $selected = [PSCustomObject]@{
+                Identifier  = $existingCfg.omarchy_guid
+                Description = $existingCfg.omarchy_description
+            }
+        }
+    }
+
+    if (-not $selected) {
+        Write-Host "Scanning UEFI firmware entries..." -ForegroundColor Cyan
+        $entries = Parse-BcdFirmwareEntries
+
         $candidates = $entries | Where-Object {
             $_.Identifier -ne "{fwbootmgr}" -and
             $_.Identifier -ne "{bootmgr}" -and
@@ -359,26 +384,27 @@ function Run-Setup {
     Save-Config $cfg
     Write-Host "`nSaved Omarchy target to config.json." -ForegroundColor Green
 
+    # Create runner script for Scheduled Task
+    $runnerPath = Join-Path $ScriptDir "reboot-runner.cmd"
+    $runnerContent = "@echo off`r`npowershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" reboot-direct`r`n"
+    Set-Content -Path $runnerPath -Value $runnerContent -Encoding ascii
+
+    # Remove existing task if present
+    Remove-ScheduledTaskIfExists
+
     # Create Scheduled Task for zero-UAC execution
     Write-Host "`nRegistering elevated scheduled task '$TaskName' (allows 1-click reboot with no UAC)..." -ForegroundColor Cyan
-    $taskAction = "powershell.exe"
-    $taskArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" reboot-direct"
+    $createOutput = cmd.exe /c "schtasks /create /tn `"$TaskName`" /tr `"\`"$runnerPath\`"`" /sc ONCE /st 00:00 /ru `"SYSTEM`" /rl HIGHEST /f 2>&1"
 
-    # Delete existing task if present
-    schtasks /delete /tn $TaskName /f 2>$null | Out-Null
-    $createRes = schtasks /create /tn $TaskName /tr "$taskAction $taskArgs" /sc ONCE /st 00:00 /ru "SYSTEM" /rl HIGHEST /f 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $user = "$env:USERDOMAIN\$env:USERNAME"
+        $createOutput = cmd.exe /c "schtasks /create /tn `"$TaskName`" /tr `"\`"$runnerPath\`"`" /sc ONCE /st 00:00 /ru `"$user`" /rl HIGHEST /f 2>&1"
+    }
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Scheduled task created successfully." -ForegroundColor Green
     } else {
-        # Fallback to current user with highest privileges
-        $user = "$env:USERDOMAIN\$env:USERNAME"
-        $createRes = schtasks /create /tn $TaskName /tr "$taskAction $taskArgs" /sc ONCE /st 00:00 /ru "$user" /rl HIGHEST /f 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "Scheduled task created with user privileges." -ForegroundColor Green
-        } else {
-            Write-Host "Warning: Could not create scheduled task: $createRes" -ForegroundColor Yellow
-        }
+        Write-Host "Warning: Could not create scheduled task: $createOutput" -ForegroundColor Yellow
     }
 
     # Create Desktop Shortcut
@@ -387,7 +413,8 @@ function Run-Setup {
     $cmdLauncherPath = Join-Path $ScriptDir "reboot-to-omarchy.cmd"
 
     # Create cmd launcher
-    Set-Content -Path $cmdLauncherPath -Value "@echo off`r`nschtasks /run /tn $TaskName`r`n" -Encoding ascii
+    $cmdLauncherContent = "@echo off`r`nschtasks /run /tn $TaskName >nul 2>&1`r`nif %errorlevel% neq 0 (`r`n    powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0omarchy-boot.ps1`" reboot omarchy`r`n)`r`n"
+    Set-Content -Path $cmdLauncherPath -Value $cmdLauncherContent -Encoding ascii
 
     $wshShell = New-Object -ComObject WScript.Shell
     $shortcut = $wshShell.CreateShortcut($shortcutPath)

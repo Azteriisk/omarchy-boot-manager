@@ -4,5 +4,6 @@
 __pycache__/
 *.pyc
 windows/config.json
+windows/reboot-runner.cmd
 *.lnk
 
