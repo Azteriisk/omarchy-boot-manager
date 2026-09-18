@@ -30,6 +30,9 @@ if [ "$SCRIPT_DIR" != "$TARGET_DIR" ]; then
         "$SCRIPT_DIR/install.sh" \
         "$SCRIPT_DIR/uninstall.sh" \
         "$SCRIPT_DIR/README.md" "$TARGET_DIR/"
+  if [ -d "$SCRIPT_DIR/windows" ]; then
+    cp -a "$SCRIPT_DIR/windows" "$TARGET_DIR/"
+  fi
 fi
 
 # 3. Ensure scripts are executable & symlink CLI binaries

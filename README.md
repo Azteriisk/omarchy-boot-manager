@@ -7,6 +7,7 @@ It solves the two biggest pain points in Linux gaming and dual-booting:
 1. **Anti-Cheat Compatibility via Permanent Secure Boot**: Enrolls custom Secure Boot keys alongside Microsoft OEM keys so games that require Secure Boot (Valorant/Vanguard, EasyAntiCheat titles, FACEIT) work in Windows while Omarchy boots cleanly with Secure Boot enabled permanently.
 2. **Limine Dual-Boot Integration**: Automatically detects Windows EFI System Partitions and injects a chainload entry into Limine with one click.
 3. **Quick Reboot Controls**: Reboot directly into Windows (one-shot via `efibootmgr -n`) or into UEFI/BIOS setup (`systemctl reboot --firmware-setup`) without holding keyboard hotkeys during POST.
+4. **Bidirectional Fast Swapping (Windows Companion)**: Includes a zero-UAC Windows companion utility (`windows/`) to jump back to Omarchy from Windows with a single desktop click or terminal command (`reboot-omarchy`), setting the one-shot UEFI target via `bcdedit /set {fwbootmgr} bootsequence`.
 
 ---
 
@@ -127,6 +128,50 @@ omarchy-boot gui
 
 ---
 
+## Windows Companion: Swap Back to Omarchy
+
+Dual-booting is only convenient if switching back from Windows is just as effortless. The repository includes a Windows companion utility in [`windows/`](windows/) that allows you to reboot straight into Omarchy without pressing BIOS hotkeys (F11/F12) or making manual bootloader selections.
+
+### How It Works on Windows
+
+Windows manages the one-shot EFI boot target through the BCD store:
+```cmd
+bcdedit /set {fwbootmgr} bootsequence <OMARCHY_ENTRY_GUID>
+shutdown /r /t 0
+```
+This sets the UEFI NVRAM `BootNext` variable directly, mirroring `efibootmgr -n`. On the next reboot only, the motherboard firmware loads Omarchy / Limine directly. Subsequent boots automatically revert to your standard boot order.
+
+### Zero-UAC Execution
+
+Modifying BCD normally requires Administrator privileges and pops a Windows UAC confirmation dialog every time. The companion avoids this by registering a high-integrity Windows Scheduled Task (`RebootToOmarchy`):
+- Desktop shortcuts and terminal commands trigger the task (`schtasks /run /tn "RebootToOmarchy"`).
+- Your PC reboots into Omarchy with **zero UAC prompts**.
+
+### Windows Setup
+
+1. Boot into Windows.
+2. Open the [`windows/`](windows/) folder in this repository (or copy it to your Windows drive).
+3. Right-click **`install.bat`** and select **"Run as administrator"** (or run `.\omarchy-boot.ps1 setup` in an elevated PowerShell terminal).
+4. The wizard scans your UEFI firmware entries, auto-detects your Omarchy / Limine entry, and configures:
+   - **`Reboot into Omarchy`** shortcut on your Desktop
+   - **`Reboot into BIOS`** shortcut on your Desktop
+   - Adds `reboot-omarchy` and `reboot-bios` command aliases to your PowerShell `$PROFILE`
+
+### Windows Commands
+
+```powershell
+# Instant swap to Omarchy Linux
+reboot-omarchy
+
+# Instant reboot to BIOS Setup
+reboot-bios
+
+# View Secure Boot status & EFI partitions
+.\omarchy-boot.ps1 status
+```
+
+---
+
 ## Technical Notes
 
 **ESP mount permissions**: Omarchy mounts the EFI System Partition with `fmask=0077`, making `/boot` unreadable by non-root users. The plugin accounts for this by using `sudo find` for EFI discovery at signing time rather than Python `glob()`, which silently returns empty results for unreadable directories.
@@ -134,6 +179,8 @@ omarchy-boot gui
 **Snapshot kernels**: Limine with `limine-snapper-sync` stores immutable kernel copies for each Btrfs snapshot in a `limine_history/` directory on the ESP. These are not tracked by sbctl's signing database since they never change, but must be individually signed for Secure Boot to permit booting into snapshots. The wizard handles this automatically.
 
 **Microsoft OEM key preservation**: The `-m` flag in `sbctl enroll-keys -m` includes Microsoft's CA and KEK certificates alongside your custom keys. This is required for Windows Boot Manager and Windows anti-cheat systems to continue working. Omitting it results in Windows refusing to boot under Secure Boot.
+
+**Bidirectional one-shot swapping**: Linux `efibootmgr -n <id>` and Windows `bcdedit /set {fwbootmgr} bootsequence <guid>` manipulate the exact same underlying UEFI specification runtime variable (`BootNext`, GUID `{8BE4DF61-93CA-11D2-AA0D-00E098032B8C}`). Both directions preserve the primary UEFI boot order, ensuring neither operating system permanently overwrites the user's default boot priority.
 
 **Key re-enrollment**: If you reinstall Omarchy or reset your BIOS to factory defaults, you will need to re-run the wizard. Your previous keys are stored in `/var/lib/sbctl/` and can be re-enrolled without regenerating them.
 
