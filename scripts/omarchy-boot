@@ -186,6 +186,8 @@ systemctl reboot
 """
         if os.geteuid() == 0:
             subprocess.run(["bash", "-c", script], check=False)
+        elif subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0:
+            subprocess.run(["sudo", "bash", "-c", script], check=False)
         else:
             subprocess.run(["pkexec", "bash", "-c", script], check=False)
     else:
