@@ -141,14 +141,10 @@ def cmd_reboot(args):
                 print(f"  • Injecting Windows entry into limine.conf...")
                 add_windows_to_limine(partuuid, label="Windows 11")
 
-        # 2. Gracefully close windows and trigger OSD if running inside a desktop session
+        # 2. Trigger OSD if running inside a desktop session
         gui_grace = """
 if command -v omarchy-osd >/dev/null 2>&1; then
     omarchy-osd -i reboot -m "Rebooting to Windows" -d 5000 2>/dev/null || true
-fi
-if command -v omarchy-hyprland-window-close-all >/dev/null 2>&1; then
-    omarchy-hyprland-window-close-all 2>/dev/null || true
-    sleep 1
 fi
 """
         subprocess.run(["bash", "-c", gui_grace], check=False)
