@@ -124,6 +124,46 @@ echo "Windows entry added successfully to $CFG"
         return False, "pkexec is not installed on this system"
 
 
+def set_limine_oneshot(entry_label: str = "Windows 11") -> Tuple[bool, str]:
+    """Sets the UEFI Boot Loader Interface variable LoaderEntryOneShot so Limine boots Windows on the next reboot."""
+    guid = "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+    script = f"""set -e
+python3 - << 'PYEOF'
+import subprocess
+from pathlib import Path
+
+guid = "{guid}"
+attrs = b"\\x07\\x00\\x00\\x00"
+
+def write_var(name, val_str):
+    p = Path(f"/sys/firmware/efi/efivars/{{name}}-{{guid}}")
+    if p.exists():
+        subprocess.run(["chattr", "-i", str(p)], check=False)
+        try:
+            p.unlink()
+        except Exception:
+            pass
+    payload = attrs + val_str.encode("utf-16le") + b"\\x00\\x00"
+    with open(p, "wb") as f:
+        f.write(payload)
+
+write_var("LoaderEntryOneShot", "{entry_label}")
+write_var("LoaderConfigTimeoutOneShot", "0")
+PYEOF
+"""
+    runner = ["bash", "-c", script]
+    if os.geteuid() != 0:
+        runner = ["pkexec", "bash", "-c", script]
+
+    try:
+        subprocess.run(runner, capture_output=True, text=True, check=True)
+        return True, "One-shot boot set for Limine"
+    except subprocess.CalledProcessError as e:
+        return False, f"Elevation error: {e.stderr.strip() or str(e)}"
+    except FileNotFoundError:
+        return False, "pkexec is not installed on this system"
+
+
 if __name__ == "__main__":
     guid = "8a80c1ba-ee7f-4114-929e-cef5b92cf75e"
     print("Sample Windows Limine Entry:")

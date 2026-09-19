@@ -32,5 +32,6 @@ package() {
   ln -sf "/usr/share/omarchy/plugins/azterisk.boot/scripts/omarchy-boot-gui" "$pkgdir/usr/bin/omarchy-boot-gui"
 
   install -Dm644 omarchy-boot.desktop "$pkgdir/usr/share/applications/omarchy-boot.desktop"
+  install -Dm644 scripts/org.omarchy.bootmanager.policy "$pkgdir/usr/share/polkit-1/actions/org.omarchy.bootmanager.policy"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

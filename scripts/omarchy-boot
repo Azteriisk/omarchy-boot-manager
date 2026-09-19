@@ -125,12 +125,69 @@ def cmd_reboot(args):
     elif target in ("windows", "win"):
         entries = get_efi_boot_entries()
         win_id = entries.get("windows_id")
-        if not win_id:
-            print(f"{RED}Error: Windows Boot Manager could not be found in efibootmgr.{RESET}")
+        win_parts = get_windows_partitions()
+
+        if not win_id and not win_parts:
+            print(f"{RED}Error: Windows could not be located in efibootmgr or partitions.{RESET}")
             sys.exit(1)
 
-        print(f"{CYAN}🔄 Setting next one-shot boot to Windows Boot Manager (Boot{win_id})...{RESET}")
-        script = f"efibootmgr -n {win_id} && systemctl reboot"
+        print(f"{CYAN}🔄 Configuring one-shot reboot into Windows...{RESET}")
+
+        # 1. Ensure Windows is in limine.conf if partition is detected
+        if win_parts:
+            partuuid = win_parts[0]["partuuid"]
+            limine_cfg = read_limine_config()
+            if limine_cfg is not None and not has_windows_chainload(limine_cfg):
+                print(f"  • Injecting Windows entry into limine.conf...")
+                add_windows_to_limine(partuuid, label="Windows 11")
+
+        # 2. Gracefully close windows and trigger OSD if running inside a desktop session
+        gui_grace = """
+if command -v omarchy-osd >/dev/null 2>&1; then
+    omarchy-osd -i reboot -m "Rebooting to Windows" -d 5000 2>/dev/null || true
+fi
+if command -v omarchy-hyprland-window-close-all >/dev/null 2>&1; then
+    omarchy-hyprland-window-close-all 2>/dev/null || true
+    sleep 1
+fi
+"""
+        subprocess.run(["bash", "-c", gui_grace], check=False)
+
+        # 3. Elevated unified script: sets BootNext, sets Limine LoaderEntryOneShot, and reboots
+        guid = "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+        win_id_cmd = f"efibootmgr -n {win_id} 2>/dev/null || true" if win_id else "true"
+
+        script = f"""set -e
+# 1. Set UEFI BootNext (honored on boards that support BootNext)
+{win_id_cmd}
+
+# 2. Set Limine LoaderEntryOneShot (honored by Limine on ASUS and other motherboards)
+python3 - << 'PYEOF'
+import subprocess
+from pathlib import Path
+
+guid = "{guid}"
+attrs = b"\\x07\\x00\\x00\\x00"
+
+def write_var(name, val_str):
+    p = Path(f"/sys/firmware/efi/efivars/{{name}}-{{guid}}")
+    if p.exists():
+        subprocess.run(["chattr", "-i", str(p)], check=False)
+        try:
+            p.unlink()
+        except Exception:
+            pass
+    payload = attrs + val_str.encode("utf-16le") + b"\\x00\\x00"
+    with open(p, "wb") as f:
+        f.write(payload)
+
+write_var("LoaderEntryOneShot", "Windows 11")
+write_var("LoaderConfigTimeoutOneShot", "0")
+PYEOF
+
+# 3. Trigger system reboot
+systemctl reboot
+"""
         if os.geteuid() == 0:
             subprocess.run(["bash", "-c", script], check=False)
         else:

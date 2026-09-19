@@ -48,7 +48,13 @@ cp "$TARGET_DIR/omarchy-boot.desktop" "$APPS_DIR/omarchy-boot.desktop"
 update-desktop-database "$APPS_DIR" 2>/dev/null || true
 echo "  ✓ Installed application entry in $APPS_DIR/omarchy-boot.desktop"
 
-# 5. Integrate into Omarchy Menu (omarchy-menu.jsonc)
+# 5. Install polkit policy if root/writable
+if [ -w /usr/share/polkit-1/actions ]; then
+  cp "$TARGET_DIR/scripts/org.omarchy.bootmanager.policy" /usr/share/polkit-1/actions/ 2>/dev/null || true
+  echo "  ✓ Installed polkit policy in /usr/share/polkit-1/actions/"
+fi
+
+# 6. Integrate into Omarchy Menu (omarchy-menu.jsonc)
 echo "  ⚙ Configuring Omarchy Menu extensions for Boot Manager..."
 python3 - << 'PYEOF'
 import re
