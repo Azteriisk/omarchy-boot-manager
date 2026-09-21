@@ -149,24 +149,25 @@ fi
 """
         subprocess.run(["bash", "-c", gui_grace], check=False)
 
-        # 3. Elevated unified script: sets BootNext, sets Limine LoaderEntryOneShot, and reboots
-        guid = "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
-        win_id_cmd = f"efibootmgr -n {win_id} 2>/dev/null || true" if win_id else "true"
+        # 3. Elevated unified execution: sets BootNext, sets Limine LoaderEntryOneShot, and reboots
+        clean_win_id = str(win_id).strip() if win_id and re.match(r"^[0-9A-Fa-f]{4}$", str(win_id).strip()) else ""
 
-        script = f"""set -e
-# 1. Set UEFI BootNext (honored on boards that support BootNext)
-{win_id_cmd}
-
-# 2. Set Limine LoaderEntryOneShot (honored by Limine on ASUS and other motherboards)
-python3 - << 'PYEOF'
-import subprocess
+        REBOOT_UNIFIED_HELPER = """
+import sys, re, subprocess
 from pathlib import Path
 
-guid = "{guid}"
+win_id = sys.argv[1].strip() if len(sys.argv) > 1 else ""
+
+# 1. Set UEFI BootNext if valid ID provided
+if win_id and re.match(r"^[0-9A-Fa-f]{4}$", win_id):
+    subprocess.run(["efibootmgr", "-n", win_id], capture_output=True, check=False)
+
+# 2. Set Limine LoaderEntryOneShot
+guid = "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
 attrs = b"\\x07\\x00\\x00\\x00"
 
 def write_var(name, val_str):
-    p = Path(f"/sys/firmware/efi/efivars/{{name}}-{{guid}}")
+    p = Path(f"/sys/firmware/efi/efivars/{name}-{guid}")
     if p.exists():
         subprocess.run(["chattr", "-i", str(p)], check=False)
         try:
@@ -177,19 +178,23 @@ def write_var(name, val_str):
     with open(p, "wb") as f:
         f.write(payload)
 
-write_var("LoaderEntryOneShot", "Windows 11")
-write_var("LoaderConfigTimeoutOneShot", "0")
-PYEOF
+try:
+    write_var("LoaderEntryOneShot", "Windows 11")
+    write_var("LoaderConfigTimeoutOneShot", "0")
+except Exception:
+    pass
 
-# 3. Trigger system reboot
-systemctl reboot
+# 3. Trigger reboot
+subprocess.run(["systemctl", "reboot"], check=False)
 """
         if os.geteuid() == 0:
-            subprocess.run(["bash", "-c", script], check=False)
+            runner = [sys.executable, "-c", REBOOT_UNIFIED_HELPER, clean_win_id]
         elif subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0:
-            subprocess.run(["sudo", "bash", "-c", script], check=False)
+            runner = ["sudo", sys.executable, "-c", REBOOT_UNIFIED_HELPER, clean_win_id]
         else:
-            subprocess.run(["pkexec", "bash", "-c", script], check=False)
+            runner = ["pkexec", sys.executable, "-c", REBOOT_UNIFIED_HELPER, clean_win_id]
+
+        subprocess.run(runner, check=False)
     else:
         print(f"{RED}Unknown reboot target: {target}. Use 'windows' or 'bios'.{RESET}")
         sys.exit(1)
