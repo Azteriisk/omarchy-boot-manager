@@ -10,17 +10,18 @@ depends=('python' 'python-gobject' 'gtk4' 'libadwaita' 'efibootmgr' 'sbctl')
 makedepends=('git')
 provides=('omarchy-boot-manager')
 conflicts=('omarchy-boot-manager')
-source=("git+https://github.com/Azteriisk/omarchy-boot-manager.git")
+_commit="1ec113bdb6c63597c4f3378ac9f1116c3472b717"
+source=("${pkgname}::git+https://github.com/Azteriisk/omarchy-boot-manager.git#commit=${_commit}")
 sha256sums=('SKIP')
 
 pkgver() {
-  cd "$srcdir/omarchy-boot-manager"
+  cd "$srcdir/${pkgname}"
   git describe --long --tags --abbrev=7 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' ||
   printf "1.0.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
 }
 
 package() {
-  cd "$srcdir/omarchy-boot-manager"
+  cd "$srcdir/${pkgname}"
   install -dm755 "$pkgdir/usr/share/omarchy/plugins/azterisk.boot"
   cp -a manifest.json Service.qml scripts omarchy-boot.desktop README.md "$pkgdir/usr/share/omarchy/plugins/azterisk.boot/"
   if [ -d windows ]; then
