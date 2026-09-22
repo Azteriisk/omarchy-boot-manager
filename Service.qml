@@ -11,7 +11,7 @@ Item {
   property string windowsGuid: ""
   property string boardModel: ""
 
-  readonly property string bootCli: Quickshell.env("HOME") + "/.local/bin/omarchy-boot"
+  readonly property string bootCli: Quickshell.env("HOME") + "/.config/omarchy/plugins/azterisk.boot/scripts/omarchy-boot"
 
   function refresh() {
     if (!statusProc.running) {

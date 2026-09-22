@@ -9,6 +9,8 @@ import sys
 import os
 import re
 import json
+import shutil
+import shlex
 import argparse
 import subprocess
 from pathlib import Path
@@ -143,12 +145,8 @@ def cmd_reboot(args):
                 add_windows_to_limine(partuuid, label="Windows 11")
 
         # 2. Trigger OSD if running inside a desktop session
-        gui_grace = """
-if command -v omarchy-osd >/dev/null 2>&1; then
-    omarchy-osd -i reboot -m "Rebooting to Windows" -d 5000 2>/dev/null || true
-fi
-"""
-        subprocess.run(["bash", "-c", gui_grace], check=False)
+        if shutil.which("omarchy-osd"):
+            subprocess.run(["omarchy-osd", "-i", "reboot", "-m", "Rebooting to Windows", "-d", "5000"], capture_output=True, check=False)
 
         # 3. Elevated unified execution: sets BootNext, sets Limine LoaderEntryOneShot, and reboots
         clean_win_id = str(win_id).strip() if win_id and re.match(r"^[0-9A-Fa-f]{4}$", str(win_id).strip()) else ""
@@ -253,8 +251,8 @@ def cmd_setup(args):
 
     choice = input("\nExecute Secure Boot signing commands now? [Y/n]: ").strip().lower()
     if choice != "n":
-        full_script = "\n".join(cmds)
-        subprocess.run(["bash", "-c", full_script], check=False)
+        for c in cmds:
+            subprocess.run(shlex.split(c), check=False)
 
     # Windows dual boot
     win = get_windows_partitions()
