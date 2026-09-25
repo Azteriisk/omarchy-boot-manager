@@ -112,12 +112,13 @@ insertion = "\n".join(lines) + "\n"
 # Insert before the last closing bracket
 r_bracket = content.rfind("}")
 if r_bracket != -1:
-    new_content = content[:r_bracket].rstrip()
-    if new_content and not new_content.endswith("{") and not new_content.endswith(","):
-        new_content += ",\n"
+    before = content[:r_bracket].rstrip()
+    after = content[r_bracket:]
+    if before and not before.endswith("{") and not before.endswith(","):
+        before += "\n,\n"
     else:
-        new_content += "\n"
-    new_content += insertion + "}\n"
+        before += "\n"
+    new_content = before + insertion + after
 else:
     new_content = "{\n" + insertion + "}\n"
 
