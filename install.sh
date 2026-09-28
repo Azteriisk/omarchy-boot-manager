@@ -96,7 +96,7 @@ block_marker_start = "// --- BEGIN OMARCHY BOOT MANAGER ---"
 block_marker_end = "// --- END OMARCHY BOOT MANAGER ---"
 
 if block_marker_start in content and block_marker_end in content:
-    pattern = re.compile(rf"{re.escape(block_marker_start)}.*?{re.escape(block_marker_end)}\n?", re.DOTALL)
+    pattern = re.compile(rf"\n?\s*{re.escape(block_marker_start)}.*?{re.escape(block_marker_end)}\s*,?\n?", re.DOTALL)
     content = pattern.sub("", content)
 
 # Format the JSONC entries block
@@ -104,7 +104,7 @@ lines = [
     f"  {block_marker_start}",
     '  "setup.boot": {"icon": "󰌿", "label": "Boot & Secure Boot", "description": "Windows dual-boot & Secure Boot configuration", "aliases": ["boot", "secure-boot", "windows-boot", "bios-setup"], "action": "omarchy-boot gui"},',
     '  "system.reboot-windows": {"icon": "", "label": "Reboot into Windows", "description": "One-shot boot directly into Windows for next boot", "aliases": ["reboot-windows", "windows"], "action": "omarchy-boot reboot windows"},',
-    '  "system.reboot-bios": {"icon": "󰒔", "label": "Reboot into BIOS Setup", "description": "Reboot straight to motherboard UEFI firmware", "aliases": ["reboot-bios", "bios", "uefi"], "action": "omarchy-boot reboot bios"}',
+    '  "system.reboot-bios": {"icon": "󰒔", "label": "Reboot into BIOS Setup", "description": "Reboot straight to motherboard UEFI firmware", "aliases": ["reboot-bios", "bios", "uefi"], "action": "omarchy-boot reboot bios"},',
     f"  {block_marker_end}"
 ]
 insertion = "\n".join(lines) + "\n"
@@ -112,13 +112,7 @@ insertion = "\n".join(lines) + "\n"
 # Insert before the last closing bracket
 r_bracket = content.rfind("}")
 if r_bracket != -1:
-    before = content[:r_bracket].rstrip()
-    after = content[r_bracket:]
-    if before and not before.endswith("{") and not before.endswith(","):
-        before += "\n,\n"
-    else:
-        before += "\n"
-    new_content = before + insertion + after
+    new_content = content[:r_bracket].rstrip() + "\n" + insertion + "}\n"
 else:
     new_content = "{\n" + insertion + "}\n"
 
