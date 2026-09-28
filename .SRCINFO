@@ -14,7 +14,7 @@ pkgbase = omarchy-boot-manager-git
 	depends = sbctl
 	provides = omarchy-boot-manager
 	conflicts = omarchy-boot-manager
-	source = omarchy-boot-manager-git::git+https://github.com/Azteriisk/omarchy-boot-manager.git#commit=76f1b3bcea4fd0a9026e08622bb77eed06c7cc78
+	source = omarchy-boot-manager-git::git+https://github.com/Azteriisk/omarchy-boot-manager.git#commit=0c6e662cdb40affad88670c0c744fd0e3af45c21
 	sha256sums = SKIP
 
 pkgname = omarchy-boot-manager-git
