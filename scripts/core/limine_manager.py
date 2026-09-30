@@ -161,8 +161,6 @@ def add_windows_to_limine(partuuid: str, label: str = "Windows 11") -> Tuple[boo
         return False, str(e)
 
     cfg_path = find_limine_config() or Path("/boot/limine.conf")
-    if not cfg_path.exists():
-        return False, f"limine.conf not found at {cfg_path}"
 
     import sys
     if os.geteuid() == 0:
