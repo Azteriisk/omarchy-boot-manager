@@ -110,11 +110,10 @@ lines = [
 insertion = "\n".join(lines) + "\n"
 
 # Insert before the last closing bracket
-r_bracket = content.rfind("}")
-if r_bracket != -1:
-    new_content = content[:r_bracket].rstrip() + "\n" + insertion + "}\n"
-else:
-    new_content = "{\n" + insertion + "}\n"
+content = re.sub(r"\}\s*$", "", content).rstrip()
+if not content.endswith("{") and not content.endswith(","):
+    content += ","
+new_content = content + "\n" + insertion + "}\n"
 
 menu_file.write_text(new_content, encoding="utf-8")
 print("     [OK] Injected Boot & Secure Boot entries into omarchy-menu.jsonc")

@@ -10,7 +10,7 @@ depends=('python' 'python-gobject' 'gtk4' 'libadwaita' 'efibootmgr' 'sbctl')
 makedepends=('git')
 provides=('omarchy-boot-manager')
 conflicts=('omarchy-boot-manager')
-_commit="865c5c238338e3a474e80e73e6ee63eef8029136"
+_commit="e5d9d4d5b02697061bea095b634b4cc9c61e8767"
 source=("${pkgname}::git+https://github.com/Azteriisk/omarchy-boot-manager.git#commit=${_commit}")
 sha256sums=('SKIP')
 
